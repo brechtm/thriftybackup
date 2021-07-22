@@ -49,7 +49,7 @@ def main():
   sync_age = age_of_last_backup(now, "sync")
 
   if not sync_age or sync_age > timedelta(days=7):  # full sync every week
-    rclone("sync", SOURCE, DESTINATION, "--checkers", "32", "--fast-list",
+    rclone("sync", SOURCE, DESTINATION, "--fast-list", "--retries", "1",
            "--track-renames", "--track-renames-strategy", "modtime,leaf", *extra)
   elif any_age > timedelta(hours=3):                # "top up" every 3 hours
     age_in_seconds = int(any_age.total_seconds()) + 60  # safety margin
