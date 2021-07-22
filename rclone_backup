@@ -1,0 +1,4 @@
+#!/bin/sh
+
+/Users/brechtm/Documents/Tools/rclone/.venv/bin/python /Users/brechtm/Documents/Tools/rclone/rclone_backup.py $@
+

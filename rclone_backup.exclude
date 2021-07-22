@@ -1,0 +1,13 @@
+.nox/
+.tox/
+.venv/
+/.briefcase/
+/.cache/
+/.npm/
+/.pyenv/
+/Downloads/
+/Library/Application Support/Deezer/
+/Library/Caches/
+/Library/Developer/
+/Library/Containers/
+/Library/Group Containers/
