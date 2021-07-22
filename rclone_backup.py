@@ -32,28 +32,29 @@ SOURCE = "/Users/brechtm/Documents"
 DESTINATION = "crypt:Backup/MacBook/Users/brechtm/Documents"
 
 
-@pidfile(piddir=PATH)
-def main():
-  try:
-    _, action, *extra = sys.argv
-  except ValueError:
-    raise SystemExit("ERROR: no action supplied (copy, sync)")
-
-  logs = [logfile.name for logfile in PATH.glob("*.log")]
+def age_of_last_backup(now, backup_type=""):
+  logs = [logfile.name for logfile in PATH.glob(f"*{backup_type}.log")]
+  if not logs:
+  	return
   last_log = sorted(logs)[-1]
   last_timestamp, _ = last_log.split("_")
-  age = datetime.now() - datetime.fromisoformat(last_timestamp)
-  if action == "copy":
-    if age < timedelta(hours=3):  # skip backup if we recently took one
-      return
-    age_in_seconds = int(age.total_seconds()) + 60	# safety margin
-    rclone("copy", SOURCE, DESTINATION, "--max-age", str(age_in_seconds),
-           "--no-traverse", *extra)
-  elif action == "sync":  # TODO: sync when last sync was over a week ago
+  return now - datetime.fromisoformat(last_timestamp)
+
+
+@pidfile(piddir=PATH)
+def main():
+  _, *extra = sys.argv
+  now = datetime.now()
+  any_age = age_of_last_backup(now)
+  sync_age = age_of_last_backup(now, "sync")
+
+  if not sync_age or sync_age > timedelta(days=7):  # full sync every week
     rclone("sync", SOURCE, DESTINATION, "--checkers", "32", "--fast-list",
            "--track-renames", "--track-renames-strategy", "modtime,leaf", *extra)
-  else:
-  	raise SystemExit(f"ERROR: unknown action: {action}")
+  elif any_age > timedelta(hours=3):                # "top up" every 3 hours
+    age_in_seconds = int(any_age.total_seconds()) + 60  # safety margin
+    rclone("copy", SOURCE, DESTINATION, "--max-age", str(age_in_seconds),
+           "--no-traverse", *extra)
 
 
 if __name__ == "__main__":
