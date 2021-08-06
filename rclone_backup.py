@@ -58,7 +58,7 @@ def main(force=None, echo=False, extra=[]):
   elif force == "copy" or any_age > timedelta(hours=3):
     age_in_seconds = int(any_age.total_seconds()) + 60  # safety margin
     rclone("copy", SOURCE, DESTINATION, "--max-age", str(age_in_seconds),
-           *extra, echo=echo)
+           "--no-traverse", *extra, echo=echo)
 
 
 if __name__ == "__main__":
