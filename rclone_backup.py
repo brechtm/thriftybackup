@@ -1,5 +1,6 @@
 #!/bin/env python
 
+import argparse
 import subprocess
 import sys
 
@@ -19,13 +20,14 @@ ARGS = [
 PATH = Path(__file__).parent
 
 
-def rclone(command, source, destination, *extra_args):
+def rclone(command, source, destination, *extra_args, echo=False):
   timestamp = datetime.now().isoformat()
   logfile = f"{timestamp}_{command}.log"
   backupdir = f"{DESTINATION}_{timestamp}"
   cmd = ["caffeinate", "/usr/local/bin/rclone", command, "--log-file", logfile,
          "--backup-dir", backupdir, *ARGS, *extra_args, source, destination]
-#   print(" ".join(cmd))
+  if echo:
+    print(" ".join(cmd))
   subprocess.run(cmd, cwd=PATH, check=True)
 
 SOURCE = "/Users/brechtm/Documents"
@@ -42,20 +44,33 @@ def age_of_last_backup(now, backup_type=""):
 
 
 @pidfile(piddir=PATH)
-def main():
-  _, *extra = sys.argv
+def main(force=None, echo=False, extra=[]):
   now = datetime.now()
   any_age = age_of_last_backup(now)
   sync_age = age_of_last_backup(now, "sync")
 
-  if not sync_age or sync_age > timedelta(days=7):  # full sync every week
+  # full sync every week
+  if force == "sync" or not sync_age or sync_age > timedelta(days=7):
     rclone("sync", SOURCE, DESTINATION, "--fast-list", "--retries", "1",
-           "--track-renames", "--track-renames-strategy", "modtime,leaf", *extra)
-  elif any_age > timedelta(hours=3):                # "top up" every 3 hours
+           "--track-renames", "--track-renames-strategy", "modtime,leaf",
+           *extra, echo=echo)
+  # "top up" every 3 hours
+  elif force == "copy" or any_age > timedelta(hours=3):
     age_in_seconds = int(any_age.total_seconds()) + 60  # safety margin
     rclone("copy", SOURCE, DESTINATION, "--max-age", str(age_in_seconds),
-           *extra)
+           *extra, echo=echo)
 
 
 if __name__ == "__main__":
-  main()
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--echo", action="store_true",
+                      help="Print the rclone command before executing")
+  parser.add_argument("--force", choices=["sync", "copy"],
+                      help="Force a 'sync' or 'copy', regardless of when the "
+                           "last backup was performed")
+  parser.add_argument('extra_args', nargs=argparse.REMAINDER,
+                      metavar="-- <extra args>",
+                      help="All arguments trailing '--'are passed on to rclone")
+  args = parser.parse_args()
+  extra = args.extra_args[1:] if args.extra_args else []
+  main(args.force, args.echo, extra)
