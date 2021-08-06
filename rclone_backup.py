@@ -9,15 +9,15 @@ from pathlib import Path
 from pid.decorator import pidfile
 
 
-PATH = Path(__file__).parent
-
-
 ARGS = [
   "--links",
   "--exclude-from", "rclone_backup.exclude",
   "--bwlimit", "400k:off",
   "--log-level", "INFO",
 ]
+
+PATH = Path(__file__).parent
+
 
 def rclone(command, source, destination, *extra_args):
   timestamp = datetime.now().isoformat()
@@ -35,7 +35,7 @@ DESTINATION = "crypt:Backup/MacBook/Users/brechtm/Documents"
 def age_of_last_backup(now, backup_type=""):
   logs = [logfile.name for logfile in PATH.glob(f"*{backup_type}.log")]
   if not logs:
-  	return
+    return
   last_log = sorted(logs)[-1]
   last_timestamp, _ = last_log.split("_")
   return now - datetime.fromisoformat(last_timestamp)
@@ -54,7 +54,7 @@ def main():
   elif any_age > timedelta(hours=3):                # "top up" every 3 hours
     age_in_seconds = int(any_age.total_seconds()) + 60  # safety margin
     rclone("copy", SOURCE, DESTINATION, "--max-age", str(age_in_seconds),
-           "--no-traverse", *extra)
+           *extra)
 
 
 if __name__ == "__main__":
