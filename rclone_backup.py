@@ -30,6 +30,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from pid import PidFileError
 from pid.decorator import pidfile
 
 
@@ -96,4 +97,7 @@ if __name__ == "__main__":
                       help="All arguments trailing '--'are passed on to rclone")
   args = parser.parse_args()
   extra = args.extra_args[1:] if args.extra_args else []
-  main(args.force, args.echo, extra)
+  try:
+    main(args.force, args.echo, extra)
+  except PidFileError:
+    pass
