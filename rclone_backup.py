@@ -52,7 +52,15 @@ def rclone(command, source, destination, *extra_args, echo=False):
          "--backup-dir", backupdir, *ARGS, *extra_args, source, destination]
   if echo:
     print(" ".join(cmd))
-  subprocess.run(cmd, cwd=PATH, check=True)
+  try:
+    subprocess.run(cmd, cwd=PATH, check=True)
+  except subprocess.CalledProcessError as cpe:
+    rc = cpe.returncode
+    print(f"rclone returned non-zero exit status {rc}. Here is the log:\n")
+    with (PATH / logfile).open() as log:
+      print(log.read())
+    raise SystemExit(rc)    
+    
 
 SOURCE = "/Users/brechtm"
 DESTINATION = "crypt:Backup/MacBook/Users/brechtm"
