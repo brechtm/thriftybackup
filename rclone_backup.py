@@ -1,5 +1,28 @@
 #!/bin/env python
 
+""" Perform incremental backups to the cloud using rclone
+
+Usage:
+
+1. Setup virtual environment
+
+    $ cd /path/to/script
+    $ python3 -m venv .venv
+    $ .venv/bin/pip install -r requirements.txt
+
+2. Add the following to your crontab:
+
+    */15	*	*	*	*	/path/to/script/rclone_backup
+
+3. In macOS, you need to grant Full Disk Access in Security & Privacy to:
+
+    - /usr/sbin/cron
+    - /usr/local/bin/rclone
+    
+   (see also https://apple.stackexchange.com/questions/375383)
+
+"""
+
 import argparse
 import subprocess
 import sys
