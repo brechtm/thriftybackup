@@ -53,8 +53,8 @@ def rclone(command, source, destination, *extra_args, echo=False):
     print(" ".join(cmd))
   subprocess.run(cmd, cwd=PATH, check=True)
 
-SOURCE = "/Users/brechtm/Documents"
-DESTINATION = "crypt:Backup/MacBook/Users/brechtm/Documents"
+SOURCE = "/Users/brechtm"
+DESTINATION = "crypt:Backup/MacBook/Users/brechtm"
 
 
 def age_of_last_backup(now, backup_type=""):
