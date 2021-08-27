@@ -1,13 +1,26 @@
+.DS_Store
 .nox/
 .tox/
 .venv/
+__pycache__/
+node_modules/
 /.briefcase/
 /.cache/
+/.config/htop/
 /.npm/
+/.pcloud/
 /.pyenv/
+/.vscode/extensions/
 /Downloads/
 /Library/Application Support/Deezer/
+/Library/Application Support/iTerm2/iterm2env**
+/Library/Application Support/Firefox/Profiles/**/storage/
+/Library/Application Support/Spotify/
 /Library/Caches/
 /Library/Developer/
 /Library/Containers/
 /Library/Group Containers/
+/crypt/
+/pcloud/
+/pCloud Drive/
+/.Trash/
