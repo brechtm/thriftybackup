@@ -1,4 +1,6 @@
 #!/bin/sh
 
-/Users/brechtm/Documents/Tools/rclone/.venv/bin/python /Users/brechtm/Documents/Tools/rclone/rclone_backup.py $@
+# https://stackoverflow.com/questions/29832037/how-to-get-script-directory-in-posix-sh
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
+$dir/.venv/bin/python $dir/rclone_backup.py $@
