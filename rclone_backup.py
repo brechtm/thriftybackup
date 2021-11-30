@@ -36,6 +36,7 @@ from pid.decorator import pidfile
 
 ARGS = [
   "--links",
+  "--local-no-check-updated",   # https://forum.rclone.org/t/transport-connection-broken/16494/4
   "--exclude-from", "rclone_backup.exclude",
   "--bwlimit", "400k:off",
   "--log-level", "INFO",
