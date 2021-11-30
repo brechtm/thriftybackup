@@ -86,8 +86,8 @@ def main(force=None, echo=False, extra=[]):
     rclone("sync", SOURCE, DESTINATION, "--fast-list", "--retries", "1",
            "--track-renames", "--track-renames-strategy", "modtime,leaf",
            *extra, echo=echo)
-  # "top up" every 3 hours
-  elif force == "copy" or any_age > timedelta(hours=3):
+  # "top up" every 6 hours
+  elif force == "copy" or any_age > timedelta(hours=6):
     age_in_seconds = int(any_age.total_seconds()) + 60  # safety margin
     rclone("copy", SOURCE, DESTINATION, "--max-age", str(age_in_seconds),
            "--no-traverse", *extra, echo=echo)
