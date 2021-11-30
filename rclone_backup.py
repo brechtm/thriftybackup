@@ -24,6 +24,7 @@ Usage:
 """
 
 import argparse
+import re
 import subprocess
 import sys
 
@@ -57,11 +58,16 @@ def rclone(command, source, destination, *extra_args, echo=False):
     subprocess.run(cmd, cwd=PATH, check=True)
   except subprocess.CalledProcessError as cpe:
     rc = cpe.returncode
-    print(f"rclone returned non-zero exit status {rc}. Here is the log:\n")
+    print(f"rclone returned non-zero exit status {rc}. These are the errors:\n")
     with (PATH / logfile).open() as log:
-      print(log.read())
+      for line in log:
+        if RE_LOG.match(line):
+          print(line, end='')
     raise SystemExit(rc)    
     
+
+RE_LOG = re.compile(r"\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} ERROR :"
+                    r"|^(Transferred|Errors|Checks|Deleted|Renamed|Transferred|Elapsed time):")
 
 SOURCE = "/Users/brechtm"
 DESTINATION = "crypt:Backup/MacBook/Users/brechtm"
