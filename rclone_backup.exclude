@@ -7,22 +7,54 @@ node_modules/
 /.briefcase/
 /.cache/
 /.config/htop/
+/.local/share/xonsh/
 /.npm/
 /.pcloud/
 /.pyenv/
 /.vscode/extensions/
+/Documents/opqode/klanten/Axelera/brechtm/
+/Documents/opqode/klanten/Axelera/chamber/
+/Documents/opqode/klanten/Axelera/thetis/
+/Documents/opqode/klanten/Axelera/OneDrive - AXELERA AI/
 /Downloads/
 /Library/Application Support/Deezer/
 /Library/Application Support/iTerm2/iterm2env**
+/Library/Application Support/iTerm2/SavedState/
+/Library/Application Support/Firefox/Profiles/**/webappsstore.sqlite
+/Library/Application Support/Firefox/Profiles/**/favicons.sqlite
+/Library/Application Support/Firefox/Profiles/**/places.sqlite
+/Library/Application Support/Firefox/Profiles/**/places.sqlite-wal
+/Library/Application Support/Firefox/Profiles/**/cookies.sqlite
+/Library/Application Support/Firefox/Profiles/**/cookies.sqlite-wal
 /Library/Application Support/Firefox/Profiles/**/storage/
+/Library/Application Support/Firefox/Profiles/**/sessionstore-backups/
+/Library/Application Support/Microsoft/
 /Library/Application Support/Spotify/
+/Library/Assistant/SiriAnalytics.db
 /Library/Caches/
+/Library/Calendars/Calendar Cache
+/Library/Calendars/Calendar Cache-wal
 /Library/Developer/
-/Library/Containers/
+# /Library/Containers/
 /Library/Group Containers/
+/Library/Mail/V8/MailData/Envelope Index
+/Library/Mail/V8/MailData/Envelope Index-wal
+/Library/Metadata/
+/Library/Logs/
+/Library/Application Support/Firefox/Profiles/nkk173sz.default-release/AlternateServices.txt
+# /Library/Application Support/VMware Fusion/Virtual Machines/**/vmware.log
+/Library/Application Support/Knowledge/
+/Library/Application Support/Firefox/Profiles/nkk173sz.default-release/datareporting/
+/Library/PersonalizationPortrait/
+/Library/Saved Application State/
+/Library/Spelling/
+/Library/Suggestions/
+/Library/Weather/
+/Library/WebKit/
 /crypt/
 /pcloud/
 /pCloud Drive/
+/Pictures/Photos Library.photoslibrary/private/
 /Tools/rclone/logs/
 /Tools/rclone/rclone_backup.py.pid
 /.Trash/
