@@ -23,4 +23,6 @@ node_modules/
 /crypt/
 /pcloud/
 /pCloud Drive/
+/Tools/rclone/logs/
+/Tools/rclone/rclone_backup.py.pid
 /.Trash/
