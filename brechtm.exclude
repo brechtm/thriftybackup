@@ -36,6 +36,11 @@ node_modules/
 /Library/Calendars/Calendar Cache-wal
 /Library/Developer/
 # /Library/Containers/
+/Library/Containers/*/Data/Library/Caches/
+/Library/Containers/com.microsoft.OneDrive-mac/
+/Library/Containers/com.microsoft.Excel/
+/Library/Containers/com.microsoft.Powerpoint/
+/Library/Containers/com.microsoft.Word/
 /Library/Group Containers/
 /Library/Mail/V8/MailData/Envelope Index
 /Library/Mail/V8/MailData/Envelope Index-wal
@@ -51,6 +56,7 @@ node_modules/
 /Library/Suggestions/
 /Library/Weather/
 /Library/WebKit/
+/NoBackup/
 /crypt/
 /pcloud/
 /pCloud Drive/
