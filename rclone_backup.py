@@ -68,8 +68,8 @@ class RcloneBackup:
 
   def rclone(self, *args, dry_run=None, input=None, capture=False):
     dry_run = self.dry_run if dry_run is None else dry_run
-    cmd = ["caffeinate", "/usr/local/bin/rclone", *args,
-           *(self.extra_args if not capture else ())]
+    cmd = ["/usr/local/bin/rclone", *args, *(self.extra_args if not capture
+                                             else ())]
     if self.echo or dry_run:
       print(" ".join(map(str, cmd)))
     if not dry_run:
