@@ -1,0 +1,42 @@
+/Application Support/*/Cache/
+/Application Support/*/Caches/
+/Application Support/Code/CachedData/
+/Application Support/Code/CachedExtensionVSIXs/
+/Application Support/Deezer/
+/Application Support/iTerm2/iterm2env**
+/Application Support/iTerm2/SavedState/
+/Application Support/Firefox/Profiles/**/webappsstore.sqlite
+/Application Support/Firefox/Profiles/**/favicons.sqlite
+/Application Support/Firefox/Profiles/**/places.sqlite
+/Application Support/Firefox/Profiles/**/places.sqlite-wal
+/Application Support/Firefox/Profiles/**/cookies.sqlite
+/Application Support/Firefox/Profiles/**/cookies.sqlite-wal
+/Application Support/Firefox/Profiles/**/storage/
+/Application Support/Firefox/Profiles/**/sessionstore-backups/
+/Application Support/Firefox/Profiles/nkk173sz.default-release/AlternateServices.txt
+/Application Support/Firefox/Profiles/nkk173sz.default-release/datareporting/
+/Application Support/Knowledge/
+/Application Support/Microsoft/
+/Application Support/Spotify/
+/Assistant/SiriAnalytics.db
+/Caches/
+/Calendars/Calendar Cache
+/Calendars/Calendar Cache-wal
+/Developer/
+/Containers/*/Data/Library/Caches/
+/Containers/com.microsoft.OneDrive-mac/
+/Containers/com.microsoft.Excel/
+/Containers/com.microsoft.Powerpoint/
+/Containers/com.microsoft.Word/
+/Group Containers/*/Library/Caches/
+/Mail/V8/MailData/Envelope Index
+/Mail/V8/MailData/Envelope Index-wal
+/Metadata/
+/Logs/
+/PersonalizationPortrait/
+/Saved Application State/
+/Spelling/
+/Steam/
+/Suggestions/
+/Weather/
+/WebKit/

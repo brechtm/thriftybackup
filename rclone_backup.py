@@ -14,6 +14,8 @@ Usage:
 
     */15	*	*	*	*	/path/to/script/rclone_backup
 
+    You should configure your OS to send you an email on a cron job failure.
+
 3. In macOS, you need to grant Full Disk Access in Security & Privacy to:
 
     - /usr/sbin/cron
@@ -41,10 +43,9 @@ BACKUPS = [
   # source, destination, exclude file, top-up interval, full sync interval
   ("/Users/brechtm", "crypt:Backup/MacBook/Users/brechtm",
    "brechtm.exclude", timedelta(hours=6), timedelta(days=7)),
-#   ("/Users/brechtm/Library", "crypt:Backup/MacBook/Users/brechtm_Library",
-#    "brechtm_Library.exclude", timedelta(days=3), timedelta(days=7)),
+  ("/Users/brechtm/Library", "crypt:Backup/MacBook/Users/brechtm_Library",
+   "brechtm_Library.exclude", timedelta(days=2), timedelta(days=7)),
 ]
-
 
 PATH = Path(__file__).parent
 
@@ -122,7 +123,7 @@ class RcloneBackup:
       status = {}
       with log_path.open() as log:
         for line in log:
-          if self.RE_LOG.match(line):
+          if self.RE_LOG_ERROR.match(line):
             print(line, end='')
           else:
             m = self.RE_LOG_STATUS.match(line)
@@ -213,13 +214,16 @@ class RcloneBackup:
     except ValueError:
       raise SystemExit(f"There should only be a single '{backup_dir}' log file"
                        f" in {self.destination}!")
-    _, last_backup_timestamp, _ = last_log.split("_")
+    _, last_backup_timestamp, _ = last_log.rsplit("_", maxsplit=2)
     return last_log, last_backup_timestamp
 
   def get_last_backup_age(self):
     now = datetime.now()
     last_log, last_timestamp = self.get_last_log()
-    last_age = now - datetime.fromisoformat(last_timestamp)
+    try:
+      last_age = now - datetime.fromisoformat(last_timestamp)
+    except TypeError:
+      return None, None
     sync_logs = self.list_files(self.destination,
                                 include=f"/*/{self.name}_*_sync.log",
                                 files_only=True)
