@@ -1,10 +1,13 @@
 /Application Support/*/Cache/
 /Application Support/*/Caches/
+/Application Support/Audacity/
 /Application Support/Code/CachedData/
 /Application Support/Code/CachedExtensionVSIXs/
+/Application Support/Code/User/workspaceStorage/
 /Application Support/Deezer/
 /Application Support/iTerm2/iterm2env**
 /Application Support/iTerm2/SavedState/
+/Application Support/FileProvider/
 /Application Support/Firefox/Profiles/**/webappsstore.sqlite
 /Application Support/Firefox/Profiles/**/favicons.sqlite
 /Application Support/Firefox/Profiles/**/places.sqlite
@@ -18,19 +21,27 @@
 /Application Support/Knowledge/
 /Application Support/Microsoft/
 /Application Support/Spotify/
+/Application Support/Steam/
 /Assistant/SiriAnalytics.db
 /Caches/
 /Calendars/Calendar Cache
 /Calendars/Calendar Cache-wal
 /Developer/
+/CloudStorage/OneDrive-AXELERAAI/
+/Containers/*/Data/Library/Cache/
 /Containers/*/Data/Library/Caches/
+/Containers/com.apple.weather.widget/
 /Containers/com.microsoft.OneDrive-mac/
 /Containers/com.microsoft.Excel/
 /Containers/com.microsoft.Powerpoint/
 /Containers/com.microsoft.Word/
+/Containers/net.maxbor.CopyLess/
+/Containers/com.tinyspeck.slackmacgap/
 /Group Containers/*/Library/Caches/
-/Mail/V8/MailData/Envelope Index
-/Mail/V8/MailData/Envelope Index-wal
+/Group Containers/*.OneDriveSyncClientSuite/
+/Group Containers/group.com.apple.secure-control-center-preferences/
+/Mail/V*/MailData/Envelope Index
+/Mail/V*/MailData/Envelope Index-wal
 /Metadata/
 /Logs/
 /PersonalizationPortrait/
@@ -38,5 +49,6 @@
 /Spelling/
 /Steam/
 /Suggestions/
+/Trial/
 /Weather/
 /WebKit/
