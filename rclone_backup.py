@@ -42,9 +42,9 @@ from pid.decorator import pidfile
 BACKUPS = [
   # source, destination, exclude file, top-up interval, full sync interval
   ("/Users/brechtm", "crypt:Backup/MacBook/Users/brechtm",
-   "brechtm.exclude", timedelta(hours=6), timedelta(days=7)),
+   "brechtm.exclude", timedelta(hours=100), timedelta(hours=6)),
   ("/Users/brechtm/Library", "crypt:Backup/MacBook/Users/brechtm_Library",
-   "brechtm_Library.exclude", timedelta(days=2), timedelta(days=7)),
+   "brechtm_Library.exclude", timedelta(days=100), timedelta(days=2)),
 ]
 
 PATH = Path(__file__).parent
