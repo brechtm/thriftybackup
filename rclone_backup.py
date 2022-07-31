@@ -92,18 +92,27 @@ class RcloneBackup:
   RE_LOG_STATUS = re.compile(r"^(?P<field>Transferred|Errors|Checks|Deleted|Renamed|Transferred|Elapsed time):")
 
   def backup(self, force=None):
+    """Create an incremental backup from ``source`` to ``destination``
+
+    Args:
+      force (bool): perform a backup even if the copy or sync interval ...
+
+    Returns:
+      bool: ``True`` if a backup was performed, ``False`` if the interval ...
+
+    """
     last_age, sync_age = self.get_last_backup_age()
     # full sync
     if force == "sync" or (force is None
                            and (not sync_age or sync_age > self.sync_interval)):
       cmd, args = "sync", ("--fast-list", "--retries", "1", "--track-renames",
                            "--track-renames-strategy", "modtime,leaf")
-    # "top up"
+    # "top up" copy
     elif force == "copy" or last_age > self.copy_interval:
       max_age = int(last_age.total_seconds()) + 60  # safety margin
       cmd, args = "copy", ("--max-age", str(max_age), "--no-traverse")
     else:
-      return
+      return False
 
     timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M")
     last_log, last_timestamp = self.get_last_log()
@@ -136,7 +145,8 @@ class RcloneBackup:
       self.record_backup_size(backupdir)
       self.rclone("move", self.destination / last_log, backupdir)
       self.rclone("copy", log_path, self.destination)
-    # self.purge(destination)
+      # self.purge(destination)
+    return True
 
   def combine(self, old, new):
     if self.echo:
@@ -206,7 +216,7 @@ class RcloneBackup:
 
   def get_last_log(self):
     logs = self.list_files(self.destination, include=f"/{self.name}_*.log",
-                           files_only=True)
+                           recursive=False, files_only=True)
     if not logs:  # this is the first backup
       return None, None
     try:
@@ -290,8 +300,8 @@ def main(force=None, echo=False, dry_run=False, extra=[]):
       rclone_backup.purge()
     elif force == "size":
       rclone_backup.snapshot_sizes()
-    else:
-      rclone_backup.backup(force=force)
+    elif rclone_backup.backup(force=force):
+      break   # only continue to next backup if current one is skipped
 
 
 if __name__ == "__main__":
