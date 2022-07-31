@@ -328,4 +328,5 @@ if __name__ == "__main__":
   try:
     main(args.force, args.echo, args.dry_run, extra)
   except PidFileError:
-    pass
+    if sys.stdout.isatty():
+      raise SystemExit("An rclone backup is already in progress")
