@@ -101,7 +101,12 @@ class RcloneBackup:
       bool: ``True`` if a backup was performed, ``False`` if the interval ...
 
     """
-    last_age, sync_age = self.get_last_backup_age()
+    try:
+      last_age, sync_age = self.get_last_backup_age()
+    except subprocess.CalledProcessError as error:
+      if error.returncode == 1:   # connection error
+        return False
+      raise
     # full sync
     if force == "sync" or (force is None
                            and (not sync_age or sync_age > self.sync_interval)):
