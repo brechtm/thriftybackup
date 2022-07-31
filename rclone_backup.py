@@ -260,12 +260,13 @@ class RcloneBackup:
                                  include=f"/*/{self.name}_*_size_*",
                                  files_only=True)
     total = 0
+    print(f"Size of snapshots in {self.destination}")
     for path in size_files:
       timestamp, size_str = self.RE_SIZE.match(path).groups()
       size = int(size_str)
-      print(f"{timestamp:42} {human_size(size):>12}")
+      print(f"{timestamp:18} {human_size(size):>12}")  # TODO: print type
       total += size
-    print(f"Total: {human_size(total):>12}")
+    print(f"{'Total:':18} {human_size(total):>12}")
 
 
 # https://rclone.org/docs/#exit-code
