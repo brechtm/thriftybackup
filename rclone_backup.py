@@ -110,23 +110,27 @@ class RcloneBackup:
     # full sync
     if force == "sync" or (force is None
                            and (not sync_age or sync_age > self.sync_interval)):
-      cmd, args = "sync", ("--fast-list", "--retries", "1", "--track-renames",
-                           "--track-renames-strategy", "modtime,leaf")
+      cmd, args = "sync", ["--fast-list", "--retries", "1", "--track-renames",
+                           "--track-renames-strategy", "modtime,leaf"]
     # "top up" copy
     elif force == "copy" or last_age > self.copy_interval:
       max_age = int(last_age.total_seconds()) + 60  # safety margin
-      cmd, args = "copy", ("--max-age", str(max_age), "--no-traverse")
+      cmd, args = "copy", ["--max-age", str(max_age), "--no-traverse"]
     else:
       return False
 
     timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M")
     last_log, last_timestamp = self.get_last_log()
     log_filename = f"{self.name}_{timestamp}_{cmd}.log"
+    self.logs_path.mkdir(parents=True, exist_ok=True)
     log_path = self.logs_path / log_filename
-    backupdir = self.destination / last_timestamp
+    if last_timestamp:
+      backupdir = self.destination / last_timestamp
+      args.extend(["--backup-dir", backupdir])
+    if self.exclude_file:
+      args.extend(["--exclude-from", self.exclude_file])
     try:
-      self.rclone(cmd, "--log-file", log_path, "--backup-dir", backupdir,
-                  "--exclude-from", self.exclude_file, *args, *self.BACKUP_ARGS,
+      self.rclone(cmd, "--log-file", log_path, *args, *self.BACKUP_ARGS,
                   *self.extra_args, self.source, self.destination / "latest")
     except subprocess.CalledProcessError as cpe:
       rc = cpe.returncode
@@ -147,8 +151,9 @@ class RcloneBackup:
         print(line, end='')
       raise SystemExit(rc)
     finally:
-      self.record_backup_size(backupdir)
-      self.rclone("move", self.destination / last_log, backupdir)
+      if last_timestamp:
+        self.record_backup_size(backupdir)
+        self.rclone("move", self.destination / last_log, backupdir)
       self.rclone("copy", log_path, self.destination)
       # self.purge(destination)
     return True
