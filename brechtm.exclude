@@ -7,6 +7,9 @@ node_modules/
 /.briefcase/
 /.cache/
 /.config/htop/
+/.config/Ambermoon/
+/.diffusionbee/
+/.local/share/containers/
 /.local/share/xonsh/
 /.npm/
 /.pcloud/
@@ -17,6 +20,8 @@ node_modules/
 /Documents/opqode/klanten/Axelera/thetis/
 /Documents/opqode/klanten/Axelera/OneDrive - AXELERA AI/
 /Downloads/
+/DOS Games/
+/Games/
 /Library/
 /NoBackup/
 /crypt/

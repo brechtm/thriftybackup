@@ -5,6 +5,8 @@
 /Application Support/Code/CachedExtensionVSIXs/
 /Application Support/Code/User/workspaceStorage/
 /Application Support/Deezer/
+/Application Support/DiffusionBee/
+/Application Support/heroic/
 /Application Support/iTerm2/iterm2env**
 /Application Support/iTerm2/SavedState/
 /Application Support/FileProvider/
@@ -20,8 +22,11 @@
 /Application Support/Firefox/Profiles/nkk173sz.default-release/datareporting/
 /Application Support/Knowledge/
 /Application Support/Microsoft/
+/Application Support/Microsoft Edge/
+/Application Support/com.operasoftware.OperaGX/
 /Application Support/Spotify/
 /Application Support/Steam/
+/Application Support/WhatsApp/
 /Assistant/SiriAnalytics.db
 /Caches/
 /Calendars/Calendar Cache
@@ -31,13 +36,18 @@
 /Containers/*/Data/Library/Cache/
 /Containers/*/Data/Library/Caches/
 /Containers/com.apple.weather.widget/
+/Containers/com.apple.ScreenTimeWidgetApplication.ScreenTimeWidgetExtension/
+/Containers/com.if.Amphetamine/
 /Containers/com.microsoft.OneDrive-mac/
+/Containers/com.microsoft.OneDrive-mac.FileProvider/
 /Containers/com.microsoft.Excel/
 /Containers/com.microsoft.Powerpoint/
 /Containers/com.microsoft.Word/
 /Containers/net.maxbor.CopyLess/
 /Containers/com.tinyspeck.slackmacgap/
+/Containers/com.utmapp.UTM/
 /Group Containers/*/Library/Caches/
+/Group Containers/*.groups.com.apple.podcasts/
 /Group Containers/*.OneDriveSyncClientSuite/
 /Group Containers/group.com.apple.secure-control-center-preferences/
 /Mail/V*/MailData/Envelope Index
