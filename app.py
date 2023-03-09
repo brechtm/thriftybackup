@@ -1,23 +1,23 @@
 
 
+import argparse
 import json
 import plistlib
 import re
+import sys
+import tomllib
 
-from collections import defaultdict
-from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from subprocess import run, Popen, PIPE
 from tempfile import TemporaryDirectory
-from threading import Thread, Event
+from threading import Thread
 
+import pid
 import rumps
-
-from rumps import MenuItem
 
 
 PATH = Path(__file__).parent
-BACKUPS_JSON = PATH / 'backups.json'
 
 
 class Entry:
@@ -125,9 +125,9 @@ def find_large_entries(entry, threshold):
 # change ~/Library to include-only
 
 
-def write_ncdu_export(tree, ncdu_export_path):
+def write_ncdu_export(root, tree, ncdu_export_path):
     ncdu = [1, 2, dict(progname=__file__, progver='0.0.0', timestamp=0),
-            tree.to_ncdu(backup['source'])]
+            tree.to_ncdu(str(root))]
     with ncdu_export_path.open('w') as f:
         json.dump(ncdu, f)
 
@@ -147,32 +147,44 @@ def large_entry_menu_item_clicked(menu_item, path):
 RE_SNAPSHOT = re.compile('com\.apple\.TimeMachine\.(\d{4}-\d{2}-\d{2}-\d{6})\.local')
 
 
-class BackupProcess:
+class RCloneBackup:
 
-    def __init__(self, source, destination, threshold):
+    def __init__(self, name, source, destination, interval, threshold):
+        self.name = name
         self.source = Path(source)
         self.destination = Path(destination)
+        self.interval = interval
         self.threshold = threshold
+        self.pid = None
         self.interface = None
         
         self._tempdir = TemporaryDirectory()
         self.mount_point = Path(self._tempdir.name)
-        timestamp = self.mount_last_snapshot()
-
-        label = self.destination.name
-        self.exclude_file = PATH / f'{label}.exclude'
-        self.ncdu_export = PATH / 'logs' / label / f'{label}_{timestamp}.json'
-        
+        self.timestamp = self.mount_last_snapshot()        
         self.thread = None
+
+    @property
+    def exclude_file(self):
+        return PATH / f'{self.name}.exclude'        
+
+    @property
+    def logs_path(self):
+        return PATH / 'logs' / self.name
+
+    @property
+    def ncdu_export_path(self):
+        return self.logs_path / f'{self.name}_{self.timestamp}_ncdu.json'
 
     def __del__(self):
         # TODO: stop thread
         self.unmount_snapshot()
         
-    def start(self):
-        assert self.interface is not None
-        self.thread = Thread(target=self.run, daemon=True)
-        self.thread.start()
+    def backup(self):
+        with pid.PidFile(piddir=PATH) as self.pid:
+            self.interface = AppInterface(self)
+            self.thread = Thread(target=self.backup_thread, daemon=True)
+            self.thread.start()
+            self.interface.start_app()
         
     def mount_last_snapshot(self):
         # TODO: manually create new snapshot?
@@ -191,8 +203,8 @@ class BackupProcess:
     def unmount_snapshot(self):
         run(['umount', self.mount_point], check=True)        
 
-    def run(self):
-        self.tree, large_entries = self.prepare()
+    def backup_thread(self):
+        self.tree, large_entries = self.backup_prepare()
         backup_size = self.tree.size
         if large_entries:
             # the following returns when the user chooses to continue the backup
@@ -202,19 +214,19 @@ class BackupProcess:
         else:
             exclude = []
         self.interface.startBackup_(backup_size)
-        self.backup(exclude)
+        self.backup_sync(exclude)
         self.unmount_snapshot()
         self.interface.quitApp()
 
-    def prepare(self):
+    def backup_prepare(self):
         source = self.mount_point / self.source
         destination = self.destination / 'latest'
         tree = backup_diff(source, destination, self.exclude_file)
-        write_ncdu_export(tree, self.ncdu_export)
+        write_ncdu_export(self.source, tree, self.ncdu_export_path)
         return tree, sorted(find_large_entries(tree, self.threshold),
                             key=lambda item: item[1].size, reverse=True)
 
-    def backup(self, exclude):
+    def backup_sync(self, exclude):
         # TODO: caffeinate
         # FIXME: abort subprocesses on App quit
         exclude_args = []
@@ -249,10 +261,13 @@ class AppInterface(NSObject):
         # https://pyobjc.readthedocs.io/en/latest/examples/Cocoa/AppKit/PythonBrowser/index.html
         return cls.alloc().init()
 
-    def __init__(self, process, app):
+    def __init__(self, process):
         self.process = process
-        self.app = app
+        self.app = MenuBarApp(self)
         self._queue = Queue(maxsize=1)
+
+    def start_app(self):
+        self.app.run()
 
     # process -> app
     
@@ -297,14 +312,15 @@ class AppInterface(NSObject):
 
 class MenuBarApp(rumps.App):
     
-    def __init__(self):
+    def __init__(self, interface):
         super().__init__('rclone backup', icon='rclone.icns', template=True,
                          quit_button=None)
+        self.interface = interface
         self.large_entry_menu_items = []
         self.prepare()
 
     def add_menuitem(self, title, callback=None, key=None):
-        self.menu.add(MenuItem(title, callback=callback, key=key))
+        self.menu.add(rumps.MenuItem(title, callback=callback, key=key))
 
     def add_show_files_file_menu_item(self):
         self.add_menuitem('Show Files', self.show_files, 'f')
@@ -336,10 +352,12 @@ class MenuBarApp(rumps.App):
             self.add_large_menu_item(path, entry, i)
 
     def add_large_menu_item(self, path, entry, index):
-        menu_item = MenuItem(f'{format_size(entry.size, True)}  {path}',
-                             key=str(index) if index < 10 else None,
-                             callback=lambda menu_item:
-                                 large_entry_menu_item_clicked(menu_item, path))
+        menu_item = rumps.MenuItem(
+            f'{format_size(entry.size, True)}  {path}',
+            key=str(index) if index < 10 else None,
+            callback=lambda menu_item:
+                large_entry_menu_item_clicked(menu_item, path)
+        )
         self.menu.add(menu_item)
         self.large_entry_menu_items.append((menu_item, path, entry))
 
@@ -375,7 +393,7 @@ class MenuBarApp(rumps.App):
         run(['open', '-a', 'TextMate', self.interface.process.exclude_file])
 
     def show_files(self, _):
-        script = TERMINAL_NCDU.format(file=self.interface.process.ncdu_export)
+        script = TERMINAL_NCDU.format(file=self.interface.process.ncdu_export_path)
         run(['osascript', '-e', script])
 
     def abort_backup(self, _):
@@ -383,6 +401,7 @@ class MenuBarApp(rumps.App):
         self.quit()
         
     def quit(self):
+        self.interface.process.pid.close()
         rumps.quit_application()
 
 
@@ -394,15 +413,48 @@ tell app "Terminal"
 end tell
 """
 
-if __name__ == '__main__':
-    with BACKUPS_JSON.open() as f:
-        backups = json.load(f)
-    for backup in backups:
-        process = BackupProcess(backup['source'], backup['destination'],
-                                backup['threshold'])
-        app = MenuBarApp()
-        interface = AppInterface(process, app)
-        process.interface = app.interface = interface
-        process.start()
-        app.run()
-        break
+
+RE_INTERVAL = re.compile(r'((?P<days>\d+?)\s*(d|days?))?\s*'
+                         r'((?P<hours>\d+?)\s*(h|hours?))?')
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--echo', action='store_true',
+                        help="Echo the rclone commands before executing them")
+    parser.add_argument('--dry-run', action='store_true',
+                        help="Dry-run rclone commands")
+    subparsers = parser.add_subparsers(dest='command', )#help='')
+    parser_backup = subparsers.add_parser('backup', help='start a backup')
+    parser_backup.add_argument('--force', action='store_true',
+                               help="Force a backup regardless of when the last"
+                                    " backup was performed")
+    parser_list = subparsers.add_parser('list', help='list backup snapshots')
+    parser_list.add_argument('backup', 
+                             help="The backup configuration for which to list"
+                                  " snapshots")
+    args = parser.parse_args()
+    
+    with (PATH / 'backups.toml').open('rb') as f:
+       config = tomllib.load(f)
+    backups = {key: value for key, value in config.items()
+               if isinstance(value, dict)}
+
+    match args.command:
+        case 'backup':
+            for name, cfg in backups.items():
+                interval_match = RE_INTERVAL.fullmatch(cfg['interval'].strip())
+                interval = timedelta(**{key: int(value) for key, value in
+                                        interval_match.groupdict(0).items()})
+                try:
+                    backup = RCloneBackup(name, cfg['source'], cfg['destination'],
+                                          interval, cfg['threshold'])
+                    backup.backup()
+                except pid.PidFileError:
+                    if sys.stdout.isatty():
+                        raise SystemExit("An rclone backup is already in progress")
+                break
+        case 'list':
+            raise NotImplementedError
+        case _:
+            raise NotImplementedError
