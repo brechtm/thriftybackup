@@ -36,7 +36,7 @@ class File(Entry):
         return self.size
 
     def to_ncdu(self, name):
-        return dict(name=name, dsize=self.size)
+        return dict(name=name, asize=self.size)
         
 
 class Directory(Entry):
@@ -388,7 +388,7 @@ class MenuBarApp(rumps.App):
 
 TERMINAL_NCDU = """
 tell app "Terminal"
-  do script "ncdu --color off -f {file}; exit"
+  do script "ncdu --color off --apparent-size -f {file}; exit"
   set current settings of first window to settings set "ocean"
   activate
 end tell
