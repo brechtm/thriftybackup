@@ -149,11 +149,12 @@ RE_SNAPSHOT = re.compile('com\.apple\.TimeMachine\.(\d{4}-\d{2}-\d{2}-\d{6})\.lo
 
 class BackupProcess:
 
-    def __init__(self, source, destination, threshold, app):
+    def __init__(self, source, destination, threshold):
         self.source = Path(source)
         self.destination = Path(destination)
         self.threshold = threshold
-        self.app = app
+        self.interface = None
+        
         self._tempdir = TemporaryDirectory()
         self.mount_point = Path(self._tempdir.name)
         timestamp = self.mount_last_snapshot()
@@ -162,13 +163,16 @@ class BackupProcess:
         self.exclude_file = PATH / f'{label}.exclude'
         self.ncdu_export = PATH / 'logs' / label / f'{label}_{timestamp}.json'
         
-        self.user_decided = Event()
-        self.backup_size = None
-        self.transferred = 0
+        self.thread = None
 
     def __del__(self):
-        #  abort thread
+        # TODO: stop thread
         self.unmount_snapshot()
+        
+    def start(self):
+        assert self.interface is not None
+        self.thread = Thread(target=self.run, daemon=True)
+        self.thread.start()
         
     def mount_last_snapshot(self):
         # TODO: manually create new snapshot?
@@ -188,20 +192,19 @@ class BackupProcess:
         run(['umount', self.mount_point], check=True)        
 
     def run(self):
-        self.app.prepare()
         self.tree, large_entries = self.prepare()
-        self.backup_size = self.tree.size
-        exclude = []
+        backup_size = self.tree.size
         if large_entries:
-            self.app.threshold_exceeded(self.tree.size, large_entries)
-            self.user_decided.wait()
-            for menu_item, path, size in self.app.large_entry_menu_items:
-                if not menu_item.state:
-                    exclude.append(path)
-                    self.backup_size -= size
-        self.app.start_backup()
+            # the following returns when the user chooses to continue the backup
+            exclude = self.interface.thresholdExceeded_((backup_size,
+                                                         large_entries))
+            backup_size -= sum(entry.size for path, entry in exclude)
+        else:
+            exclude = []
+        self.interface.startBackup_(backup_size)
         self.backup(exclude)
-        self.app.finish()
+        self.unmount_snapshot()
+        self.interface.quitApp()
 
     def prepare(self):
         source = self.mount_point / self.source
@@ -215,35 +218,90 @@ class BackupProcess:
         # TODO: caffeinate
         # FIXME: abort subprocesses on App quit
         exclude_args = []
-        for path in exclude:
+        for path, entry in exclude:
             exclude_args.extend(['--exclude', path])
         source = self.mount_point / self.source
         destination = self.destination / 'latest'
         rclone = Popen(['rclone', 'sync', '--dry-run', '--use-json-log',
                         '--exclude-from', self.exclude_file, *exclude_args,
-                        '--fast-list', '--links',
-                        '--track-renames', '--track-renames-strategy', 'modtime,leaf',
+                        '--fast-list', '--links', '--track-renames',
+                        '--track-renames-strategy', 'modtime,leaf',
                         source, destination], stderr=PIPE)
+        transferred = 0
         for line in rclone.stderr:
             msg = json.loads(line)
             if size := msg.get('size'):
-                import time
-                self.transferred += size
+                transferred += size
+                self.interface.updateProgress_(transferred)
 
 
-class RcloneBackup(rumps.App):
+from AppKit import NSAttributedString
+from Cocoa import NSColor, NSForegroundColorAttributeName
+from Foundation import NSObject
+from PyObjCTools.Conversion import propertyListFromPythonCollection
 
-    def __init__(self, source, destination, threshold):
+from queue import Queue
+
+
+class AppInterface(NSObject):
+
+    def __new__(cls, *args, **kwargs):
+        # https://pyobjc.readthedocs.io/en/latest/examples/Cocoa/AppKit/PythonBrowser/index.html
+        return cls.alloc().init()
+
+    def __init__(self, process, app):
+        self.process = process
+        self.app = app
+        self._queue = Queue(maxsize=1)
+
+    # process -> app
+    
+    def thresholdExceeded_(self, args):
+        self.pyobjc_performSelectorOnMainThread_withObject_('_thresholdExceeded:', args)
+        return self._queue.get()
+
+    def _thresholdExceeded_(self, args):
+        self.app.threshold_exceeded(*args)
+
+    def startBackup_(self, total_bytes):
+        self.pyobjc_performSelectorOnMainThread_withObject_('_startBackup:', total_bytes)
+
+    def _startBackup_(self, total_bytes):
+        self.app.start_backup(total_bytes)        
+
+    def updateProgress_(self, transferred_bytes):
+        self.pyobjc_performSelectorOnMainThread_withObject_('_updateProgress:', transferred_bytes)
+        
+    def _updateProgress_(self, transferred_bytes):
+        self.app.update_progress(transferred_bytes)
+    
+    def quitApp(self):
+        self.pyobjc_performSelectorOnMainThread_withObject_('_quitApp:', None)
+
+    def _quitApp_(self, _):
+        self.app.quit()
+
+    # app -> process
+        
+    def continueBackup_(self, excluded):
+        self._queue.put_nowait(excluded)
+
+    def abortBackup(self):
+        # ALT: just kill rclone process from this thread? (call Popen.terminate())
+        self.pyobjc_performSelector_onThread_withObject_waitUntilDone_(
+            '_abortBackup:', self.process.thread, None, False) # probably only takes NSThread
+
+    def _abortBackup_(self, _):
+        self.process
+
+
+class MenuBarApp(rumps.App):
+    
+    def __init__(self):
         super().__init__('rclone backup', icon='rclone.icns', template=True,
                          quit_button=None)
-        self.process = BackupProcess(source, destination, threshold, self)
-        self.backing_up = False
-        
-        # TODO: move this into Process
-        process = Thread(target=self.process.run, daemon=True)
-        process.start()
-        
-        self.counter = 1
+        self.large_entry_menu_items = []
+        self.prepare()
 
     def add_menuitem(self, title, callback=None, key=None):
         self.menu.add(MenuItem(title, callback=callback, key=key))
@@ -254,51 +312,57 @@ class RcloneBackup(rumps.App):
     def prepare(self):
         self.add_menuitem('Preparing backup...')
 
+    def set_title(self, title, color=None):
+        self.title = f' {title}'
+        if color:   # https://github.com/jaredks/rumps/issues/30
+            r, g, b, a = color
+            color = NSColor.colorWithCalibratedRed_green_blue_alpha_(r, g, b, a)
+            attributes = propertyListFromPythonCollection({NSForegroundColorAttributeName: color}, conversionHelper=lambda x: x)
+            string = NSAttributedString.alloc().initWithString_attributes_(self.title, attributes)
+            self._nsapp.nsstatusitem.setAttributedTitle_(string)
+
     def threshold_exceeded(self, total_size, large_entries):
         self.menu.clear()
         rumps.notification("Backup size exceeds treshold", None,
                            f"Total backup size: {format_size(total_size)}")
+        self.set_title(format_size(total_size), color=(1, 0, 0, 1))
         self.add_menuitem('Continue Backup', self.continue_backup, 'c')
         self.add_menuitem('Skip Backup', self.skip_backup, 's')
         self.add_menuitem('Edit Exclude File', self.edit_exclude_file, 'x')
         self.add_show_files_file_menu_item()
         self.menu.add(rumps.separator)
-
-        self.large_entry_menu_items = []
         for i, (parts, entry) in enumerate(large_entries, start=1):
             path = '/'.join(parts)
-            menu_item = MenuItem(f'{format_size(entry.size, True)}  {path}',
-                                 key=str(i) if i < 10 else None,
-                                 callback=lambda menu_item: large_entry_menu_item_clicked(menu_item, path))
-            self.large_entry_menu_items.append((menu_item, path, entry.size))
-            self.menu.add(menu_item)
+            self.add_large_menu_item(path, entry, i)
 
-    def start_backup(self):
+    def add_large_menu_item(self, path, entry, index):
+        menu_item = MenuItem(f'{format_size(entry.size, True)}  {path}',
+                             key=str(index) if index < 10 else None,
+                             callback=lambda menu_item:
+                                 large_entry_menu_item_clicked(menu_item, path))
+        self.menu.add(menu_item)
+        self.large_entry_menu_items.append((menu_item, path, entry))
+
+    def start_backup(self, total_bytes):
+        self.total_bytes = total_bytes
         self.menu.clear()
         self.add_show_files_file_menu_item()
         self.add_menuitem('Abort Backup', self.abort_backup, 'a')
-        # The following doesn't work! Timer must be started from main thread!
-        # self.progress_timer = rumps.Timer(self.update_progress, 1)
-        # self.progress_timer.start()
-        self.backing_up = True
+        self.set_title(format_size(total_bytes))
 
-    @rumps.timer(1)
-    def update_progress(self, _):
-        if self.backing_up:
-            transferred = self.process.transferred
-            total = self.process.backup_size
-            self.title = (f' {format_size(transferred)} of {format_size(total)}'
-                          f' ({transferred / total:.0%})')
-
-    def finish(self):
-        self.quit()
+    def update_progress(self, transferred):
+        total = self.total_bytes
+        self.set_title(f'{format_size(transferred)} of {format_size(total)}'
+                       f' ({transferred / total:.0%})')
 
     def continue_backup(self, _):
-        for menu_item, path, size in self.large_entry_menu_items:
+        exclude = []
+        for menu_item, path, entry in self.large_entry_menu_items:
             if menu_item.state:
-                print(menu_item.title)
-        # TODO: start backup, excluding non-selected entries
-        self.process.user_decided.set()
+                print(f'keep {path} ({format_size(entry.size)})')
+            else:
+                exclude.append((path, entry))
+        self.interface.continueBackup_(exclude)
 
     # TODO: extra menu entries:
     # - backup everything
@@ -308,17 +372,17 @@ class RcloneBackup(rumps.App):
         self.quit()
 
     def edit_exclude_file(self, _):
-        run(['open', '-a', 'TextMate', self.process.exclude_file])
+        run(['open', '-a', 'TextMate', self.interface.process.exclude_file])
 
     def show_files(self, _):
-        script = TERMINAL_NCDU.format(file=self.process.ncdu_export)
+        script = TERMINAL_NCDU.format(file=self.interface.process.ncdu_export)
         run(['osascript', '-e', script])
 
     def abort_backup(self, _):
+        self.interface.abortBackup()
         self.quit()
         
     def quit(self):
-        del self.process
         rumps.quit_application()
 
 
@@ -334,7 +398,11 @@ if __name__ == '__main__':
     with BACKUPS_JSON.open() as f:
         backups = json.load(f)
     for backup in backups:
-        app = RcloneBackup(backup['source'], backup['destination'],
-                           backup['threshold'])
+        process = BackupProcess(backup['source'], backup['destination'],
+                                backup['threshold'])
+        app = MenuBarApp()
+        interface = AppInterface(process, app)
+        process.interface = app.interface = interface
+        process.start()
         app.run()
         break
