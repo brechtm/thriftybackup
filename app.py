@@ -21,7 +21,8 @@ PATH = Path(__file__).parent
 
 
 class Entry:
-    def __init__(self, size=None):
+    def __init__(self, path, size=None):
+        self.path = path
         self.size = size
 
     def calculate_size(self):
@@ -35,28 +36,42 @@ class File(Entry):
     def calculate_size(self):
         return self.size
 
+    def iter_files(self, exclude):
+        if self not in exclude:
+            yield self
+
     def to_ncdu(self, name):
         return dict(name=name, asize=self.size)
-        
+
 
 class Directory(Entry):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, path):
+        super().__init__(path)
         self.entries = {}
-        
-    def add_file(self, path_parts, size):
+    
+    def add_file(self, path, size):
+        parts = path.parts
+        self._add_file(path, parts, size)
+
+    def _add_file(self, path, path_parts, size):
         name, *parts = path_parts
+        dir_path = '/'.join(path.parts[:-len(parts)])
         if parts:
-            dir = self.entries.setdefault(name, Directory())
-            dir.add_file(parts, size)
+            dir = self.entries.setdefault(name, Directory(dir_path))
+            dir._add_file(path, parts, size)
         else:
             assert name not in self.entries
-            self.entries[name] = File(size)
+            self.entries[name] = File(path, size)
 
     def calculate_size(self):
         self.size = sum((e.calculate_size() for e in self.entries.values()),
                         start=0)
         return self.size
+
+    def iter_files(self, exclude):
+        if self not in exclude:
+            for entry in self.entries.values():
+                yield from entry.iter_files(exclude)
 
     def to_ncdu(self, name):
         return [dict(name=name),
@@ -73,21 +88,6 @@ def format_size(n_bytes, align=False):
         if not align:
             prefix = prefix.strip()
     return f'{n_bytes / 2**exp:{8 if align else 0}.02f} {prefix}B'
-
-
-def backup_diff(source, destination, exclude_file):
-    tree = Directory()
-    rclone = Popen(['rclone', 'sync', '--dry-run', '--progress', '--use-json-log',
-                    '--exclude-from', exclude_file, '--fast-list', '--links',
-                    '--track-renames', '--track-renames-strategy', 'modtime,leaf',
-                    source, destination], stderr=PIPE)
-    for line in rclone.stderr:
-        msg = json.loads(line)
-        if msg.get('skipped') == 'copy':
-            rel_path = Path(msg['object'])
-            tree.add_file(rel_path.parts, msg['size'])
-    tree.calculate_size()
-    return tree
 
 
 def find_large_entries(entry, threshold):
@@ -132,12 +132,6 @@ def write_ncdu_export(root, tree, ncdu_export_path):
         json.dump(ncdu, f)
 
 
-def large_entry_menu_item_clicked(menu_item, path):
-    menu_item.state = not menu_item.state
-    process = run( # https://stackoverflow.com/a/25802742
-        'pbcopy', env={'LANG': 'en_US.UTF-8'}, input=path, text=True)
-
-
 # phases:
 # 0) check whether current snapshot is already backed up
 # 1) prepare: determine size of backups and check threshold
@@ -161,6 +155,8 @@ class RCloneBackup:
         self._tempdir = TemporaryDirectory()
         self.mount_point = Path(self._tempdir.name)
         self.timestamp = self.mount_last_snapshot()        
+        self.snapshot_source = self.mount_point / self.source
+        self.destination_latest = self.destination / 'latest'        
         self.thread = None
 
     @property
@@ -171,9 +167,13 @@ class RCloneBackup:
     def logs_path(self):
         return PATH / 'logs' / self.name
 
+    def file_path(self, label, extension):
+        basename = self.logs_path / f'{self.name}_{self.timestamp}_{label}'
+        return basename.with_suffix(f'.{extension}')
+
     @property
     def ncdu_export_path(self):
-        return self.logs_path / f'{self.name}_{self.timestamp}_ncdu.json'
+        return self.file_path('ncdu', 'json')
 
     def __del__(self):
         # TODO: stop thread
@@ -204,13 +204,15 @@ class RCloneBackup:
         run(['umount', self.mount_point], check=True)        
 
     def backup_thread(self):
-        self.tree, large_entries = self.backup_prepare()
+        self.tree, large_entries = self.backup_scout()
         backup_size = self.tree.size
         if large_entries:
             # the following returns when the user chooses to continue the backup
             exclude = self.interface.thresholdExceeded_((backup_size,
                                                          large_entries))
-            backup_size -= sum(entry.size for path, entry in exclude)
+            for entry in exclude:
+                print(format_size(entry.size, True), entry.path)
+            backup_size -= sum(entry.size for entry in exclude)
         else:
             exclude = []
         self.interface.startBackup_(backup_size)
@@ -218,10 +220,27 @@ class RCloneBackup:
         self.unmount_snapshot()
         self.interface.quitApp()
 
-    def backup_prepare(self):
-        source = self.mount_point / self.source
-        destination = self.destination / 'latest'
-        tree = backup_diff(source, destination, self.exclude_file)
+    def sync_popen(self, *args):
+        cmd = ['rclone', 'sync', '--use-json-log', '--fast-list', '--links',
+               '--track-renames', '--track-renames-strategy', 'modtime,leaf',
+               *args,
+               self.snapshot_source, self.destination_latest]
+        return Popen(cmd, stderr=PIPE)
+
+    def backup_scout(self):
+        tree = Directory('')
+        rclone_sync = self.sync_popen('--dry-run', '--progress',
+                                      '--exclude-from', self.exclude_file)
+        scout_log = self.file_path('scout', 'log')
+        with scout_log.open('wb') as log:
+            for line in rclone_sync.stderr:
+                log.write(line)
+                msg = json.loads(line)
+                if msg.get('skipped') == 'copy':
+                    rel_path = Path(msg['object'])
+                    tree.add_file(rel_path, msg['size'])
+        tree.calculate_size()
+        self.tree = tree
         write_ncdu_export(self.source, tree, self.ncdu_export_path)
         return tree, sorted(find_large_entries(tree, self.threshold),
                             key=lambda item: item[1].size, reverse=True)
@@ -229,22 +248,22 @@ class RCloneBackup:
     def backup_sync(self, exclude):
         # TODO: caffeinate
         # FIXME: abort subprocesses on App quit
-        exclude_args = []
-        for path, entry in exclude:
-            exclude_args.extend(['--exclude', path])
-        source = self.mount_point / self.source
-        destination = self.destination / 'latest'
-        rclone = Popen(['rclone', 'sync', '--dry-run', '--use-json-log',
-                        '--exclude-from', self.exclude_file, *exclude_args,
-                        '--fast-list', '--links', '--track-renames',
-                        '--track-renames-strategy', 'modtime,leaf',
-                        source, destination], stderr=PIPE)
+        files_txt = self.file_path('files', 'txt')
+        with files_txt.open('w') as files:
+            for file in self.tree.iter_files(exclude=exclude):
+                print(file.path, file=files)
+        files_txt = self.file_path('files', 'txt')
+        rclone_sync = self.sync_popen('--dry-run', '--progress',
+                                      '--files-from-raw', files_txt)
         transferred = 0
-        for line in rclone.stderr:
-            msg = json.loads(line)
-            if size := msg.get('size'):
-                transferred += size
-                self.interface.updateProgress_(transferred)
+        sync_log = self.file_path('sync', 'log')
+        with sync_log.open('wb') as log:
+            for line in rclone_sync.stderr:
+                log.write(line)
+                msg = json.loads(line)
+                if size := msg.get('size'):
+                    transferred += size
+                    self.interface.updateProgress_(transferred)
 
 
 from AppKit import NSAttributedString
@@ -348,18 +367,26 @@ class MenuBarApp(rumps.App):
         self.add_show_files_file_menu_item()
         self.menu.add(rumps.separator)
         for i, (parts, entry) in enumerate(large_entries, start=1):
-            path = '/'.join(parts)
-            self.add_large_menu_item(path, entry, i)
+            self.add_large_menu_item(entry, i)
 
-    def add_large_menu_item(self, path, entry, index):
+    def add_large_menu_item(self, entry, index):
         menu_item = rumps.MenuItem(
-            f'{format_size(entry.size, True)}  {path}',
+            f'{format_size(entry.size, True)}  {entry.path}',
             key=str(index) if index < 10 else None,
             callback=lambda menu_item:
-                large_entry_menu_item_clicked(menu_item, path)
+                large_entry_menu_item_clicked(menu_item, str(entry.path))
         )
         self.menu.add(menu_item)
-        self.large_entry_menu_items.append((menu_item, path, entry))
+        self.large_entry_menu_items.append((menu_item, entry))
+
+    def continue_backup(self, _):
+        exclude = []
+        for menu_item, entry in self.large_entry_menu_items:
+            if menu_item.state:
+                print(f'keep {entry.path} ({format_size(entry.size)})')
+            else:
+                exclude.append(entry)
+        self.interface.continueBackup_(exclude)
 
     def start_backup(self, total_bytes):
         self.total_bytes = total_bytes
@@ -372,15 +399,6 @@ class MenuBarApp(rumps.App):
         total = self.total_bytes
         self.set_title(f'{format_size(transferred)} of {format_size(total)}'
                        f' ({transferred / total:.0%})')
-
-    def continue_backup(self, _):
-        exclude = []
-        for menu_item, path, entry in self.large_entry_menu_items:
-            if menu_item.state:
-                print(f'keep {path} ({format_size(entry.size)})')
-            else:
-                exclude.append((path, entry))
-        self.interface.continueBackup_(exclude)
 
     # TODO: extra menu entries:
     # - backup everything
@@ -403,6 +421,12 @@ class MenuBarApp(rumps.App):
     def quit(self):
         self.interface.process.pid.close()
         rumps.quit_application()
+
+
+def large_entry_menu_item_clicked(menu_item, path):
+    menu_item.state = not menu_item.state
+    # https://stackoverflow.com/a/25802742
+    run('pbcopy', env={'LANG': 'en_US.UTF-8'}, input=path, text=True)
 
 
 TERMINAL_NCDU = """
