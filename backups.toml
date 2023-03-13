@@ -7,10 +7,10 @@ keep_daily = "31 days"
 source = "/Users/brechtm"
 destination = "crypt:Backup/MacBook/Users/brechtm"
 interval = "6 hours"
-threshold = 10240
+threshold = "10 KB"
 
 [brechtm_Library]
 source = "/Users/brechtm/Library"
 destination = "crypt:Backup/MacBook/Users/brechtm_Library"
 interval = "2 days"
-threshold = "10M"
+threshold = "10 MB"
