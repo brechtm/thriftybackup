@@ -1,5 +1,5 @@
 rclone = "/Users/brechtm/.nix-profile/bin/rclone"
-bandwidth_limit = "400K"
+bwlimit = "400K"
 keep_all = "7 days"
 keep_daily = "31 days"
 

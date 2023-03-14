@@ -146,12 +146,13 @@ RE_SNAPSHOT = re.compile('com\.apple\.TimeMachine\.(\d{4}-\d{2}-\d{2}-\d{6})\.lo
 class RCloneBackup:
 
     def __init__(self, name, source, destination, interval, threshold,
-                 echo=False, dry_run=False):
+                 bwlimit=None, echo=False, dry_run=False):
         self.name = name
         self.source = Path(source)
         self.destination = Path(destination)
         self.interval = interval
         self.threshold = threshold
+        self.bwlimit = bwlimit
         self.pid = None
         self.interface = None
         self.tree = None
@@ -305,7 +306,8 @@ class RCloneBackup:
     def sync_popen(self, *args, dry_run=False):
         snapshot_source = self.mount_point / self.source.relative_to('/')
         destination = self.destination / 'latest'
-        extra = list(chain(['--dry-run'] if dry_run else [],
+        extra = list(chain(['--bwlimit', self.bwlimit] if self.bwlimit else [],
+                           ['--dry-run'] if dry_run else [],
                            ['--progress'] if self.echo else []))
         cmd = ['rclone', 'sync', '--use-json-log', '--fast-list', '--links',
                '--track-renames', '--track-renames-strategy', 'modtime,leaf',
@@ -581,7 +583,7 @@ class Configuration(dict):
         with config_path.open('rb') as f:
             self.toml = tomllib.load(f)
         self.rclone = self.toml.get('rclone', 'rclone')
-        self.bandwidth_limit = self.toml.get('bandwidth_limit', None)
+        self.bwlimit = self.toml.get('bwlimit', None)
         self.keep_all = self._parse_keep('keep_all', '7 days')
         self.keep_daily = self._parse_keep('keep_daily', '31 days')
         for key, value in self.toml.items():
@@ -620,7 +622,8 @@ class Configuration(dict):
             except AttributeError:
                 self._syntax_error('threshold', section=name)
         return RCloneBackup(name, src, dest, interval, threshold,
-                            echo=self.echo, dry_run=self.dry_run)
+                            bwlimit=self.bwlimit, echo=self.echo,
+                            dry_run=self.dry_run)
 
 
 if __name__ == "__main__":
