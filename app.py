@@ -49,7 +49,15 @@ class Directory(Entry):
     def __init__(self, path):
         super().__init__(path)
         self.entries = {}
-    
+
+    def get(self, path: str) -> Entry:
+        parts = path.split('/')
+        return 
+
+    def _get(self, parts):
+        name, *rest = parts
+        return self.entries[name]._get(rest) if parts else self.entries[name]
+
     def add_file(self, path, size):
         parts = path.parts
         self._add_file(path, parts, size)
@@ -355,7 +363,8 @@ class RCloneBackup:
         files_txt = self.file_path('files', 'txt')
         backupdir_args = ['--backup-dir', backup_dir] if backup_dir else []
         try:
-            sync = self.sync_popen('--files-from-raw', files_txt,
+            sync = self.sync_popen('--log-level', 'INFO',
+                                   '--files-from-raw', files_txt,
                                    *backupdir_args, dry_run=self.dry_run)
             transferred = 0
             sync_log = self.file_path('sync', 'log')
@@ -363,12 +372,18 @@ class RCloneBackup:
                 for line in sync.stderr:
                     log.write(line)
                     msg = json.loads(line)
-                    if size := msg.get('size'):
+                    if size := self._get_item_size(msg):
                         transferred += size
                         self.interface.updateProgress_(transferred)
         except CalledProcessError as cpe:
             raise
         return sync_log
+
+    def _get_item_size(self, log_msg):
+        if log_msg['msg'].startswith('Copied'):
+            return self.tree.get(log_msg['object']).size
+        elif self.dry_run and log_msg.get('skipped') == 'copy':
+            return log_msg.get('size')
 
     def record_backup_size(self, backupdir):
         size_cmd = self.rclone('size', '--json', '--exclude',
