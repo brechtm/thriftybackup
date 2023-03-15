@@ -10,7 +10,7 @@ import tomllib
 from datetime import datetime, timedelta
 from itertools import chain
 from pathlib import Path
-from subprocess import run, Popen, PIPE, CalledProcessError
+from subprocess import run, Popen, PIPE, DEVNULL, CalledProcessError
 from tempfile import TemporaryDirectory
 from threading import Thread
 
@@ -98,15 +98,15 @@ def find_large_entries(entry, threshold):
     try:
         entries = entry.entries
     except AttributeError:  # entry is a file
-        yield [], entry
+        yield entry
     else:                   # entry is a directory
         yield_this_dir = True
         for name, child in entries.items():
-            for parts, entry in find_large_entries(child, threshold):
-                yield [name, *parts], entry
+            for entry in find_large_entries(child, threshold):
+                yield entry
                 yield_this_dir = False
         if yield_this_dir:
-            yield [''], entry
+            yield entry
 
 
 # - continue with backup while waiting for user decision? (skip large new dir for now)
@@ -180,6 +180,10 @@ class RCloneBackup:
     @property
     def ncdu_export_path(self):
         return self.file_path('ncdu', 'json')
+
+    @property
+    def large_files_path(self):
+        return self.file_path('large', 'log')
 
     def cleanup(self):
         # TODO: stop thread
@@ -280,11 +284,13 @@ class RCloneBackup:
         self.tree, large_entries = self.backup_scout()
         backup_size = self.tree.size
         if large_entries:
+            with self.large_files_path.open('w') as f:
+                for entry in large_entries:
+                    size = format_size(entry.size, True)
+                    print(f'{size}   {entry.path}', file=f)
             # the following returns when the user chooses to continue the backup
             exclude = self.interface.thresholdExceeded_((backup_size,
                                                          large_entries))
-            for entry in exclude:
-                print(format_size(entry.size, True), entry.path)
             backup_size -= sum(entry.size for entry in exclude)
         else:
             exclude = []
@@ -337,7 +343,7 @@ class RCloneBackup:
         self.tree = tree
         write_ncdu_export(self.source, tree, self.ncdu_export_path)
         return tree, sorted(find_large_entries(tree, self.threshold),
-                            key=lambda item: item[1].size, reverse=True)
+                            key=lambda item: item.size, reverse=True)
 
         # TODO: caffeinate
         # FIXME: abort subprocesses on App quit
@@ -495,7 +501,8 @@ class MenuBarApp(rumps.App):
         self.add_menuitem('Edit Exclude File', self.edit_exclude_file, 'x')
         self.add_show_files_file_menu_item()
         self.menu.add(rumps.separator)
-        for i, (parts, entry) in enumerate(large_entries, start=1):
+        self.add_menuitem('Items excluded from backup (check to include):')
+        for i, entry in enumerate(large_entries, start=1):
             self.add_large_menu_item(entry, i)
 
     def add_large_menu_item(self, entry, index):
@@ -537,7 +544,9 @@ class MenuBarApp(rumps.App):
         self.quit()
 
     def edit_exclude_file(self, _):
-        run(['open', '-a', 'TextMate', self.interface.process.exclude_file])
+        Popen(['qlmanage', '-p', self.interface.process.large_files_path],
+              stderr=DEVNULL)
+        run(['open', '-a', 'TextEdit', self.interface.process.exclude_file])
 
     def show_files(self, _):
         script = TERMINAL_NCDU.format(file=self.interface.process.ncdu_export_path)
