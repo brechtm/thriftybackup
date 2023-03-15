@@ -388,8 +388,7 @@ class RCloneBackup:
             return log_msg.get('size')
 
     def record_backup_size(self, backupdir):
-        size_cmd = self.rclone('size', '--json', '--exclude',
-                               f'/{self.name}_*.log', backupdir, capture=True)
+        size_cmd = self.rclone('size', '--json', backupdir, capture=True)
         size = 0 if self.dry_run else json.loads(size_cmd.stdout)['bytes']
         size_filename = f'{self.name}_{backupdir.name}_size_{size}'
         self.rclone('touch', backupdir / size_filename)
