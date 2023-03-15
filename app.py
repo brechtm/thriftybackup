@@ -327,7 +327,7 @@ class RCloneBackup:
                            ['--progress'] if self.echo else []))
         cmd = ['rclone', 'sync', '--use-json-log', '--fast-list', '--links',
                '--track-renames', '--track-renames-strategy', 'modtime,leaf',
-               '--retries', '1', *args, *extra, snapshot_source, destination]
+               *args, *extra, snapshot_source, destination]
         if self.echo:
             print(' '.join(map(str, cmd)))
         return Popen(cmd, stderr=PIPE)
