@@ -305,7 +305,7 @@ class RCloneBackup:
         self.interface.startBackup_(backup_size)
         backup_dir = (self.destination / timestamp_from_log(last_log)
                       if last_log else None)
-        sync_log = self.backup_sync(backup_dir, exclude)
+        success = self.backup_sync(backup_dir, exclude)
         if backup_dir:
             # move the logs from the last backup to the backup dir
             last_logs = '/' + last_log.replace('sync.log', '*.*')
@@ -317,7 +317,7 @@ class RCloneBackup:
         self.rclone('copy', local_logs.parent, '--include', local_logs.name,
                     self.destination)
         self.cleanup()
-        self.interface.quitApp()
+        self.interface.quitApp_(success)
 
     def sync_popen(self, *args, dry_run=False):
         snapshot_source = self.mount_point / self.source.relative_to('/')
@@ -378,8 +378,12 @@ class RCloneBackup:
                         transferred += size
                         self.interface.updateProgress_(transferred)
         except CalledProcessError as cpe:
-            raise
-        return sync_log
+            rc = cpe.returncode
+            info = RCLONE_EXIT_CODES[rc]
+            print(f"rclone returned non-zero exit status {rc} - {info}")
+            print(f"The log file is {sync_log}")
+            return False
+        return True
 
     def _get_item_size(self, log_msg):
         if log_msg['msg'].startswith('Copied'):
@@ -412,6 +416,20 @@ class RCloneBackup:
 def timestamp_from_log(log_filename):
     _, timestamp, _ = log_filename.rsplit('_', maxsplit=2)
     return timestamp
+
+
+# https://rclone.org/docs/#exit-code
+RCLONE_EXIT_CODES = {
+  1: "Syntax or usage error",
+  2: "Error not otherwise categorised",
+  3: "Directory not found",
+  4: "File not found",
+  5: "Temporary error (one that more retries might fix) (Retry errors)",
+  6: "Less serious errors (like 461 errors from dropbox) (NoRetry errors)",
+  7: "Fatal error (one that more retries won't fix, like account suspended) (Fatal errors)",
+  8: "Transfer exceeded - limit set by --max-transfer reached",
+  9: "Operation successful, but no files transferred",
+}
 
 
 from AppKit import NSAttributedString
@@ -457,10 +475,12 @@ class AppInterface(NSObject):
     def _updateProgress_(self, transferred_bytes):
         self.app.update_progress(transferred_bytes)
     
-    def quitApp(self):
-        self.pyobjc_performSelectorOnMainThread_withObject_('_quitApp:', None)
+    def quitApp_(self, success):
+        self.pyobjc_performSelectorOnMainThread_withObject_('_quitApp:', success)
 
-    def _quitApp_(self, _):
+    def _quitApp_(self, success):
+        if not success:
+            raise SystemExit(1)
         self.app.quit()
 
     # app -> process
