@@ -56,7 +56,7 @@ class Directory(Entry):
 
     def _add_file(self, path, path_parts, size):
         name, *parts = path_parts
-        dir_path = '/'.join(path.parts[:-len(parts)])
+        dir_path = '/'.join(path.parts[:-len(parts)]) + '/'
         if parts:
             dir = self.entries.setdefault(name, Directory(dir_path))
             dir._add_file(path, parts, size)
