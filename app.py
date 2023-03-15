@@ -262,7 +262,7 @@ class RCloneBackup:
         if self.echo or dry_run:
             print(' '.join(map(str, cmd)))
         if not dry_run:
-            return run(cmd, cwd=PATH, capture_output=capture, encoding="utf-8",
+            return run(cmd, cwd=PATH, capture_output=capture, encoding='utf-8',
                        check=True)
 
     def list_files(self, path, include=None, exclude=None, recursive=True,
@@ -307,13 +307,15 @@ class RCloneBackup:
                       if last_log else None)
         sync_log = self.backup_sync(backup_dir, exclude)
         if backup_dir:
+            # move the logs from the last backup to the backup dir
             last_logs = '/' + last_log.replace('sync.log', '*.*')
             self.rclone('move', self.destination, '--include', last_logs,
                         backup_dir)
-            local_logs = self.file_path('*', '*')
-            self.rclone('copy', local_logs.parent, '--include',
-                        local_logs.name, self.destination)
             self.record_backup_size(backup_dir)
+        # copy logs for this backup to the remote
+        local_logs = self.file_path('*', '*')
+        self.rclone('copy', local_logs.parent, '--include', local_logs.name,
+                    self.destination)
         self.cleanup()
         self.interface.quitApp()
 
