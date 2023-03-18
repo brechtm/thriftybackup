@@ -513,7 +513,8 @@ class MenuBarApp(rumps.App):
         self.interface = interface
         self.total_size = None
         self.large_entry_menu_items = []
-        self.total_menu_item = None
+        self.total_size_menu_item = None
+        self.progress_menu_item = None
         self.prepare()
 
     def add_menuitem(self, title, callback=None, key=None):
@@ -550,7 +551,7 @@ class MenuBarApp(rumps.App):
         self.add_menuitem('Items excluded from backup (check to include):')
         for i, entry in enumerate(large_entries, start=1):
             self.add_large_menu_item(entry, i)
-        self.total_menu_item = self.add_menuitem('')
+        self.total_size_menu_item = self.add_menuitem('')
         self.update_backup_size()
 
     def add_large_menu_item(self, entry, index):
@@ -573,7 +574,7 @@ class MenuBarApp(rumps.App):
                             for menu_item, entry in self.large_entry_menu_items
                             if not menu_item.state)
         size = self.total_size - excluded_size
-        self.total_menu_item.title = f'Backup size: {format_size(size)}'
+        self.total_size_menu_item.title = f'Backup size: {format_size(size)}'
 
     def continue_backup(self, _):
         exclude = []
@@ -587,14 +588,16 @@ class MenuBarApp(rumps.App):
     def start_backup(self, total_bytes):
         self.total_bytes = total_bytes
         self.menu.clear()
+        self.progress_menu_item = self.add_menuitem('')
         self.add_show_files_file_menu_item()
         self.add_menuitem('Abort Backup', self.abort_backup, 'a')
         self.set_title(format_size(total_bytes))
 
     def update_progress(self, transferred):
         total = self.total_bytes
-        self.set_title(f'{format_size(transferred)} of {format_size(total)}'
-                       f' ({transferred / total:.0%})')
+        self.progress_menu_item.title = (f'{format_size(transferred)}'
+                                         f' of {format_size(total)}')
+        self.set_title(f'{transferred / total:.0%}')
 
     # TODO: extra menu entries:
     # - backup everything
