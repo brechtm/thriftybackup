@@ -380,6 +380,8 @@ class RCloneBackup:
                     if size := self._get_item_size(msg):
                         transferred += size
                         self.interface.updateProgress_(transferred)
+                    elif msg['level'] == 'error':
+                        print('ERROR:', msg['msg'])
         except CalledProcessError as cpe:
             rc = cpe.returncode
             info = RCLONE_EXIT_CODES[rc]
