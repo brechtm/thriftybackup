@@ -161,13 +161,14 @@ TMUTIL = '/usr/bin/tmutil'
 class RCloneBackup:
 
     def __init__(self, name, source, destination, interval, threshold,
-                 bwlimit=None, echo=False, dry_run=False):
+                 bwlimit=None, rclone='rclone', echo=False, dry_run=False):
         self.name = name
         self.source = Path(source)
         self.destination = Path(destination)
         self.interval = interval
         self.threshold = threshold
         self.bwlimit = bwlimit
+        self.rclone_path = rclone
         self.echo = echo
         self.dry_run = dry_run
 
@@ -274,7 +275,7 @@ class RCloneBackup:
           Popen
         """
         dry_run = self.dry_run if dry_run is None else dry_run
-        cmd = ['rclone', *args]
+        cmd = [self.rclone_path, *args]
         if self.echo or dry_run:
             print(' '.join(map(str, cmd)))
         if not dry_run:
@@ -340,9 +341,10 @@ class RCloneBackup:
         extra = list(chain(['--bwlimit', self.bwlimit] if self.bwlimit else [],
                            ['--dry-run'] if dry_run else [],
                            ['--progress'] if self.echo else []))
-        cmd = ['rclone', 'sync', '--use-json-log', '--fast-list', '--links',
-               '--track-renames', '--track-renames-strategy', 'modtime,leaf',
-               *args, *extra, snapshot_source, self.destination_latest]
+        cmd = [self.rclone_path, 'sync', '--use-json-log', '--fast-list',
+               '--links', '--track-renames', '--track-renames-strategy',
+               'modtime,leaf', *args, *extra, snapshot_source,
+               self.destination_latest]
         if self.echo:
             print(' '.join(map(str, cmd)))
         return Popen(cmd, stderr=PIPE)
@@ -700,8 +702,8 @@ class Configuration(dict):
             except AttributeError:
                 self._syntax_error('threshold', section=name)
         return RCloneBackup(name, src, dest, interval, threshold,
-                            bwlimit=self.bwlimit, echo=self.echo,
-                            dry_run=self.dry_run)
+                            bwlimit=self.bwlimit, rclone=self.rclone,
+                            echo=self.echo, dry_run=self.dry_run)
 
 
 if __name__ == "__main__":
