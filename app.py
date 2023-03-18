@@ -51,12 +51,11 @@ class Directory(Entry):
         self.entries = {}
 
     def get(self, path: str) -> Entry:
-        parts = path.split('/')
-        return 
+        return self._get(path.split('/'))
 
     def _get(self, parts):
         name, *rest = parts
-        return self.entries[name]._get(rest) if parts else self.entries[name]
+        return self.entries[name]._get(rest) if rest else self.entries[name]
 
     def add_file(self, path, size):
         parts = path.parts
@@ -161,17 +160,20 @@ class RCloneBackup:
         self.interval = interval
         self.threshold = threshold
         self.bwlimit = bwlimit
+        self.echo = echo
+        self.dry_run = dry_run
+
         self.pid = None
         self.interface = None
         self.tree = None
-        
-        self.echo = True        # TODO: replace when things are working
-        self.dry_run = True     # TODO: replace when things are working
-
         self.device, self.snapshot = self.get_last_snapshot()
         self.timestamp = RE_SNAPSHOT.match(self.snapshot).group(1)
         self._tempdir = None
         self.mount_point = None
+
+    @property
+    def destination_latest(self):
+        return self.destination / 'latest'
 
     @property
     def exclude_file(self):
@@ -220,6 +222,8 @@ class RCloneBackup:
         run(['umount', self.mount_point], check=True)        
 
     def backup(self, force=False):
+        self.logs_path.mkdir(parents=True, exist_ok=True)
+        self.rclone('mkdir', self.destination_latest, dry_run=False)
         with pid.PidFile(piddir=PATH) as self.pid:
             return self._backup(force)
 
@@ -277,10 +281,10 @@ class RCloneBackup:
         return sorted(list_cmd.stdout.split())
 
     def get_last_log(self):
-        logs = self.list_files(self.destination, include=f"/{self.name}_*.log",
+        logs = self.list_files(self.destination, include=f"/{self.name}_*_sync.log",
                                recursive=False, files_only=True)
         if not logs:  # this is the first backup
-            return None, None
+            return None
         try:
             last_log, = logs
         except ValueError:
@@ -321,13 +325,12 @@ class RCloneBackup:
 
     def sync_popen(self, *args, dry_run=False):
         snapshot_source = self.mount_point / self.source.relative_to('/')
-        destination = self.destination / 'latest'
         extra = list(chain(['--bwlimit', self.bwlimit] if self.bwlimit else [],
                            ['--dry-run'] if dry_run else [],
                            ['--progress'] if self.echo else []))
         cmd = ['rclone', 'sync', '--use-json-log', '--fast-list', '--links',
                '--track-renames', '--track-renames-strategy', 'modtime,leaf',
-               *args, *extra, snapshot_source, destination]
+               *args, *extra, snapshot_source, self.destination_latest]
         if self.echo:
             print(' '.join(map(str, cmd)))
         return Popen(cmd, stderr=PIPE)
