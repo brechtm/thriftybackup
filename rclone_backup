@@ -3,4 +3,4 @@
 # https://stackoverflow.com/questions/29832037/how-to-get-script-directory-in-posix-sh
 dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
-caffeinate $dir/.venv/bin/python $dir/rclone_backup.py $@
+caffeinate $dir/.venv/bin/python $dir/app.py backup $@
