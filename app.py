@@ -717,6 +717,8 @@ if __name__ == "__main__":
                         help="Dry-run rclone commands")
     subparsers = parser.add_subparsers(dest='command', )#help='')
     parser_backup = subparsers.add_parser('backup', help='start a backup')
+    parser_backup.add_argument('name', nargs='*',
+                               help="The name of a backup configuration")
     parser_backup.add_argument('-f', '--force', action='store_true',
                                help="Force a backup regardless of when the last"
                                     " backup was performed")
@@ -730,14 +732,15 @@ if __name__ == "__main__":
 
     match args.command:
         case 'backup':
-            for backup in config.values():
+            names = args.name or config.keys()
+            for name in names:
+                backup = config[name]
                 try:
                     if backup.backup(force=args.force):
                         break   # only continue to next backup if current one is skipped
                 except pid.PidFileError:
                     if sys.stdout.isatty():
                         raise SystemExit("An rclone backup is already in progress")
-                break
         case 'list':
             if args.backup not in config:
                 msg = (f"There is no backup named '{args.backup}'. Choose one"
