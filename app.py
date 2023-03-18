@@ -509,11 +509,15 @@ class MenuBarApp(rumps.App):
         super().__init__('rclone backup', icon='rclone.icns', template=True,
                          quit_button=None)
         self.interface = interface
+        self.total_size = None
         self.large_entry_menu_items = []
+        self.total_menu_item = None
         self.prepare()
 
     def add_menuitem(self, title, callback=None, key=None):
-        self.menu.add(rumps.MenuItem(title, callback=callback, key=key))
+        menu_item = rumps.MenuItem(title, callback=callback, key=key)
+        self.menu.add(menu_item)
+        return menu_item
 
     def add_show_files_file_menu_item(self):
         self.add_menuitem('Show Files', self.show_files, 'f')
@@ -532,6 +536,7 @@ class MenuBarApp(rumps.App):
 
     def threshold_exceeded(self, total_size, large_entries):
         self.menu.clear()
+        self.total_size = total_size
         rumps.notification("Backup size exceeds treshold", None,
                            f"Total backup size: {format_size(total_size)}")
         self.set_title(format_size(total_size), color=(1, 0, 0, 1))
@@ -543,16 +548,30 @@ class MenuBarApp(rumps.App):
         self.add_menuitem('Items excluded from backup (check to include):')
         for i, entry in enumerate(large_entries, start=1):
             self.add_large_menu_item(entry, i)
+        self.total_menu_item = self.add_menuitem('')
+        self.update_backup_size()
 
     def add_large_menu_item(self, entry, index):
         menu_item = rumps.MenuItem(
             f'{format_size(entry.size, True)}  {entry.path}',
             key=str(index) if index < 10 else None,
             callback=lambda menu_item:
-                large_entry_menu_item_clicked(menu_item, str(entry.path))
+                self.large_entry_menu_item_clicked(menu_item, str(entry.path))
         )
         self.menu.add(menu_item)
         self.large_entry_menu_items.append((menu_item, entry))
+
+    def large_entry_menu_item_clicked(self, menu_item, path):
+        menu_item.state = not menu_item.state
+        run('pbcopy', env={'LANG': 'en_US.UTF-8'}, input=path, text=True)
+        self.update_backup_size()
+
+    def update_backup_size(self):
+        excluded_size = sum(entry.size
+                            for menu_item, entry in self.large_entry_menu_items
+                            if not menu_item.state)
+        size = self.total_size - excluded_size
+        self.total_menu_item.title = f'Backup size: {format_size(size)}'
 
     def continue_backup(self, _):
         exclude = []
@@ -598,12 +617,6 @@ class MenuBarApp(rumps.App):
     def quit(self):
         self.interface.cleanUp()
         rumps.quit_application()
-
-
-def large_entry_menu_item_clicked(menu_item, path):
-    menu_item.state = not menu_item.state
-    # https://stackoverflow.com/a/25802742
-    run('pbcopy', env={'LANG': 'en_US.UTF-8'}, input=path, text=True)
 
 
 TERMINAL_NCDU = """
