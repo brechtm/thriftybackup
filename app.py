@@ -156,6 +156,8 @@ def snapshot_datetime(snapshot_name):
 
 DISKUTIL = '/usr/sbin/diskutil'
 TMUTIL = '/usr/bin/tmutil'
+MOUNT_APFS = '/sbin/mount_apfs'
+UMOUNT = '/sbin/umount'
 
 
 class RCloneBackup:
@@ -228,11 +230,11 @@ class RCloneBackup:
         self._tempdir = TemporaryDirectory()
         self.mount_point = Path(self._tempdir.name)
         print(f'Mounting {self.snapshot} at {self.mount_point}')
-        run(['mount_apfs', '-s', self.snapshot,
+        run([MOUNT_APFS, '-s', self.snapshot,
              f'/dev/{self.device}', self.mount_point], check=True)
         
     def unmount_snapshot(self):
-        run(['umount', self.mount_point], check=True)        
+        run([UMOUNT, self.mount_point], check=True)        
 
     def backup(self, force=False):
         self.logs_path.mkdir(parents=True, exist_ok=True)
