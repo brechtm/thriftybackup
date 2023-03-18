@@ -149,6 +149,14 @@ def write_ncdu_export(root, tree, ncdu_export_path):
 
 RE_SNAPSHOT = re.compile('com\.apple\.TimeMachine\.(\d{4}-\d{2}-\d{2}-\d{6})\.local')
 
+def snapshot_datetime(snapshot_name):
+    timestamp = RE_SNAPSHOT.match(snapshot_name).group(1)
+    return datetime.fromisoformat(timestamp)
+
+
+DISKUTIL = '/usr/sbin/diskutil'
+TMUTIL = '/usr/bin/tmutil'
+
 
 class RCloneBackup:
 
@@ -203,12 +211,16 @@ class RCloneBackup:
         self.pid.close()
 
     def get_last_snapshot(self):
-        du_info = run(['diskutil', 'info', '-plist', 'Data'],
+        du_info = run([DISKUTIL, 'info', '-plist', 'Data'],
                       check=True, capture_output=True).stdout
         device = plistlib.loads(du_info)['DeviceIdentifier']
-        snapshots = run(['diskutil', 'apfs', 'listSnapshots', '-plist', device],
-                        check=True, capture_output=True).stdout
-        snapshot = plistlib.loads(snapshots)['Snapshots'][-1]['SnapshotName']
+        while True:
+            output = run([DISKUTIL, 'apfs', 'listSnapshots', '-plist', device],
+                         check=True, capture_output=True).stdout
+            snapshot = plistlib.loads(output)['Snapshots'][-1]['SnapshotName']
+            if datetime.now() - snapshot_datetime(snapshot) < timedelta(hours=1):
+                break
+            run([TMUTIL, 'localsnapshot'], check=True)
         return device, snapshot
 
     def mount_snapshot(self):
@@ -228,7 +240,7 @@ class RCloneBackup:
             return self._backup(force)
 
     def _backup(self, force):
-        local_timestamp = datetime.fromisoformat(self.timestamp)
+        local_timestamp = snapshot_datetime(self.snapshot)
         try:
             last_log = self.get_last_log()
         except CalledProcessError as error:
