@@ -5,6 +5,7 @@ import json
 import plistlib
 import re
 import sys
+import time
 import tomllib
 
 from datetime import datetime, timedelta
@@ -174,7 +175,6 @@ class RCloneBackup:
         self.echo = echo
         self.dry_run = dry_run
 
-        self.pid = None
         self.interface = None
         self.tree = None
         self.device, self.snapshot = self.get_last_snapshot()
@@ -211,7 +211,6 @@ class RCloneBackup:
         if hasattr(self, '_tempdir'):
             self.unmount_snapshot()
             del self._tempdir
-        self.pid.close()
 
     def get_last_snapshot(self):
         du_info = run([DISKUTIL, 'info', '-plist', 'Data'],
@@ -236,13 +235,12 @@ class RCloneBackup:
     def unmount_snapshot(self):
         run([UMOUNT, self.mount_point], check=True)        
 
-    def backup(self, force=False):
+    def backup(self, interface, force=False):
         self.logs_path.mkdir(parents=True, exist_ok=True)
         self.rclone('mkdir', self.destination_latest, dry_run=False)
-        with pid.PidFile(piddir=PATH) as self.pid:
-            return self._backup(force)
+        return self._backup(interface, force)
 
-    def _backup(self, force):
+    def _backup(self, interface, force):
         local_timestamp = snapshot_datetime(self.snapshot)
         try:
             last_log = self.get_last_log()
@@ -262,11 +260,8 @@ class RCloneBackup:
                 print(f"Last backup is only {last_age} old (< {self.interval})")
                 return False
         self.mount_snapshot()
-        self.interface = AppInterface(self)
-        self.thread = Thread(target=self.backup_thread, args=[last_log],
-                             daemon=True)
-        self.thread.start()
-        self.interface.start_app()
+        self.interface = interface
+        self.backup_thread(last_log)
 
     def rclone(self, *args, dry_run=None, capture=False) -> Popen or None:
         """Run rclone with the given arguments
@@ -311,23 +306,22 @@ class RCloneBackup:
         return last_log
 
     def backup_thread(self, last_log):
+        self.interface.prepare_(self.name)
         self.tree, large_entries = self.backup_scout()
         backup_size = self.tree.size
-        if backup_size == 0:
-            success = True
-        else:
+        if backup_size > 0:
             if large_entries:
                 with self.large_files_path.open('w') as f:
                     for entry in large_entries:
                         size = format_size(entry.size, True)
                         print(f'{size}   {entry.path}', file=f)
                 # the following returns when the user chooses to continue the backup
-                exclude = self.interface.thresholdExceeded_((backup_size,
-                                                            large_entries))
+                exclude = self.interface.thresholdExceeded_(
+                    (self.name, backup_size, large_entries))
                 backup_size -= sum(entry.size for entry in exclude)
             else:
                 exclude = []
-            self.interface.startBackup_(backup_size)
+            self.interface.startBackup_((self.name, backup_size))
             backup_dir = (self.destination / timestamp_from_log(last_log)
                         if last_log else None)
             success = self.backup_sync(backup_dir, exclude)
@@ -341,8 +335,8 @@ class RCloneBackup:
             local_logs = self.file_path('*', '*')
             self.rclone('copy', local_logs.parent, '--include', local_logs.name,
                         self.destination)
+        self.interface.idle_()
         self.cleanup()
-        self.interface.quitApp_(success)
 
     def sync_popen(self, *args, dry_run=False):
         snapshot_source = self.mount_point / self.source.relative_to('/')
@@ -473,15 +467,23 @@ class AppInterface(NSObject):
         # https://pyobjc.readthedocs.io/en/latest/examples/Cocoa/AppKit/PythonBrowser/index.html
         return cls.alloc().init()
 
-    def __init__(self, process):
-        self.process = process
-        self.app = MenuBarApp(self)
+    def __init__(self, app):
+        self.app = app
         self._queue = Queue(maxsize=1)
 
-    def start_app(self):
-        self.app.run()
-
     # process -> app
+    
+    def idle_(self, _=None):
+        self.pyobjc_performSelectorOnMainThread_withObject_('_idle:', None)
+    
+    def _idle_(self, _):
+        self.app.idle()
+        
+    def prepare_(self, backup_name):
+        self.pyobjc_performSelectorOnMainThread_withObject_('_prepare:', backup_name)
+
+    def _prepare_(self, backup_name):
+        self.app.prepare(backup_name)
     
     def thresholdExceeded_(self, args):
         self.pyobjc_performSelectorOnMainThread_withObject_('_thresholdExceeded:', args)
@@ -490,11 +492,11 @@ class AppInterface(NSObject):
     def _thresholdExceeded_(self, args):
         self.app.threshold_exceeded(*args)
 
-    def startBackup_(self, total_bytes):
-        self.pyobjc_performSelectorOnMainThread_withObject_('_startBackup:', total_bytes)
+    def startBackup_(self, args):
+        self.pyobjc_performSelectorOnMainThread_withObject_('_startBackup:', args)
 
-    def _startBackup_(self, total_bytes):
-        self.app.start_backup(total_bytes)        
+    def _startBackup_(self, args):
+        self.app.start_backup(*args)
 
     def updateProgress_(self, transferred_bytes):
         self.pyobjc_performSelectorOnMainThread_withObject_('_updateProgress:', transferred_bytes)
@@ -527,17 +529,34 @@ class AppInterface(NSObject):
         self.process.cleanup()
 
 
+def main_loop(interface, echo, dry_run, force):
+    while True:
+        config = Configuration(PATH / 'backups.toml',
+                               echo=echo, dry_run=dry_run)
+        for backup in config.values():
+            if backup.backup(interface, force=force):
+                break   # only continue to next backup if current one is skipped
+        time.sleep(15 * 60)
+
+
 class MenuBarApp(rumps.App):
     
-    def __init__(self, interface):
+    def __init__(self, echo=False, dry_run=False, force=False):
         super().__init__('rclone backup', icon='rclone.icns', template=True,
                          quit_button=None)
-        self.interface = interface
+        self.backup_name = None
         self.total_size = None
+        self.large_files_path = None
+        self.exclude_file = None
+        self.ncdu_export_path = None
         self.large_entry_menu_items = []
         self.total_size_menu_item = None
         self.progress_menu_item = None
-        self.prepare()
+        self.interface = AppInterface(self)
+        self.thread = Thread(target=main_loop,
+                             args=[self.interface, echo, dry_run, force],
+                             daemon=True)
+        self.thread.start()
 
     def add_menuitem(self, title, callback=None, key=None):
         menu_item = rumps.MenuItem(title, callback=callback, key=key)
@@ -547,8 +566,16 @@ class MenuBarApp(rumps.App):
     def add_show_files_file_menu_item(self):
         self.add_menuitem('Show Files', self.show_files, 'f')
 
-    def prepare(self):
-        self.add_menuitem('Determining backup size...')
+    def idle(self):
+        self.title = None
+        self.menu.clear()
+        self.add_menuitem('Quit', rumps.quit_application, 'q')
+        self.backup_name = None
+        self.exclude_file = None
+        self.ncdu_export_path = None
+
+    def prepare(self, backup_name):
+        self.add_menuitem(f'{backup_name}: determining backup size...')
 
     def set_title(self, title, color=None):
         self.title = f' {title}'
@@ -559,12 +586,17 @@ class MenuBarApp(rumps.App):
             string = NSAttributedString.alloc().initWithString_attributes_(self.title, attributes)
             self._nsapp.nsstatusitem.setAttributedTitle_(string)
 
-    def threshold_exceeded(self, total_size, large_entries):
+    def threshold_exceeded(self, backup_name, total_size, large_entries,
+                           large_files_path, exclude_file, ncdu_export_path):
         self.menu.clear()
         self.total_size = total_size
-        rumps.notification("Backup size exceeds treshold", None,
+        self.large_files_path = large_files_path
+        self.exclude_file = exclude_file
+        self.ncdu_export_path = ncdu_export_path
+        rumps.notification(f"{backup_name}: Backup size exceeds treshold", None,
                            f"Total backup size: {format_size(total_size)}")
-        self.set_title(format_size(total_size), color=(1, 0, 0, 1))
+        self.set_title(f"{backup_name} {format_size(total_size)}",
+                       color=(1, 0, 0, 1))
         self.add_menuitem('Continue Backup', self.continue_backup, 'c')
         self.add_menuitem('Skip Backup', self.skip_backup, 's')
         self.add_menuitem('Edit Exclude File', self.edit_exclude_file, 'x')
@@ -607,7 +639,8 @@ class MenuBarApp(rumps.App):
                 exclude.append(entry)
         self.interface.continueBackup_(exclude)
 
-    def start_backup(self, total_bytes):
+    def start_backup(self, backup_name, total_bytes):
+        self.backup_name = backup_name
         self.total_bytes = total_bytes
         self.menu.clear()
         self.progress_menu_item = self.add_menuitem('')
@@ -616,10 +649,10 @@ class MenuBarApp(rumps.App):
         self.set_title(format_size(total_bytes))
 
     def update_progress(self, transferred):
-        total = self.total_bytes
-        self.progress_menu_item.title = (f'{format_size(transferred)}'
-                                         f' of {format_size(total)}')
-        self.set_title(f'{transferred / total:.0%}')
+        self.progress_menu_item.title = \
+            (f'{self.backup_name} {format_size(transferred)}'
+             f' of {format_size(self.total_bytes)}')
+        self.set_title(f'{transferred / self.total_bytes:.0%}')
 
     # TODO: extra menu entries:
     # - backup everything
@@ -629,12 +662,11 @@ class MenuBarApp(rumps.App):
         self.quit()
 
     def edit_exclude_file(self, _):
-        Popen(['qlmanage', '-p', self.interface.process.large_files_path],
-              stderr=DEVNULL)
-        run(['open', '-a', 'TextEdit', self.interface.process.exclude_file])
+        Popen(['qlmanage', '-p', self.large_files_path], stderr=DEVNULL)
+        run(['open', '-a', 'TextEdit', self.exclude_file])
 
     def show_files(self, _):
-        script = TERMINAL_NCDU.format(file=self.interface.process.ncdu_export_path)
+        script = TERMINAL_NCDU.format(file=self.ncdu_export_path)
         run(['osascript', '-e', script])
 
     def abort_backup(self, _):
@@ -731,10 +763,12 @@ if __name__ == "__main__":
     parser_list.add_argument('backup', help="The backup configuration for which"
                                             " to list snapshots")
     args = parser.parse_args()
-    
-    config = Configuration(PATH / 'backups.toml',
-                           echo=args.echo, dry_run=args.dry_run)
 
+    with pid.PidFile(piddir=PATH):
+        app = MenuBarApp(args.echo, args.dry_run, args.force)
+        app.run()
+
+    # FIXME: never reached because app just exits program; handle another way
     match args.command:
         case 'backup':
             names = args.name or config.keys()
