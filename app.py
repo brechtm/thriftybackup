@@ -313,31 +313,34 @@ class RCloneBackup:
     def backup_thread(self, last_log):
         self.tree, large_entries = self.backup_scout()
         backup_size = self.tree.size
-        if large_entries:
-            with self.large_files_path.open('w') as f:
-                for entry in large_entries:
-                    size = format_size(entry.size, True)
-                    print(f'{size}   {entry.path}', file=f)
-            # the following returns when the user chooses to continue the backup
-            exclude = self.interface.thresholdExceeded_((backup_size,
-                                                         large_entries))
-            backup_size -= sum(entry.size for entry in exclude)
+        if backup_size == 0:
+            success = True
         else:
-            exclude = []
-        self.interface.startBackup_(backup_size)
-        backup_dir = (self.destination / timestamp_from_log(last_log)
-                      if last_log else None)
-        success = self.backup_sync(backup_dir, exclude)
-        if backup_dir:
-            # move the logs from the last backup to the backup dir
-            last_logs = '/' + last_log.replace('sync.log', '*.*')
-            self.rclone('move', self.destination, '--include', last_logs,
-                        backup_dir)
-            self.record_backup_size(backup_dir)
-        # copy logs for this backup to the remote
-        local_logs = self.file_path('*', '*')
-        self.rclone('copy', local_logs.parent, '--include', local_logs.name,
-                    self.destination)
+            if large_entries:
+                with self.large_files_path.open('w') as f:
+                    for entry in large_entries:
+                        size = format_size(entry.size, True)
+                        print(f'{size}   {entry.path}', file=f)
+                # the following returns when the user chooses to continue the backup
+                exclude = self.interface.thresholdExceeded_((backup_size,
+                                                            large_entries))
+                backup_size -= sum(entry.size for entry in exclude)
+            else:
+                exclude = []
+            self.interface.startBackup_(backup_size)
+            backup_dir = (self.destination / timestamp_from_log(last_log)
+                        if last_log else None)
+            success = self.backup_sync(backup_dir, exclude)
+            if backup_dir:
+                # move the logs from the last backup to the backup dir
+                last_logs = '/' + last_log.replace('sync.log', '*.*')
+                self.rclone('move', self.destination, '--include', last_logs,
+                            backup_dir)
+                self.record_backup_size(backup_dir)
+            # copy logs for this backup to the remote
+            local_logs = self.file_path('*', '*')
+            self.rclone('copy', local_logs.parent, '--include', local_logs.name,
+                        self.destination)
         self.cleanup()
         self.interface.quitApp_(success)
 
