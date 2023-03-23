@@ -554,6 +554,7 @@ class MenuBarApp(rumps.App):
         self.large_entry_menu_items = []
         self.total_size_menu_item = None
         self.progress_menu_item = None
+        self.idle()
         self.interface = AppInterface(self)
         self.thread = Thread(target=main_loop,
                              args=[self.interface, echo, dry_run, force],
