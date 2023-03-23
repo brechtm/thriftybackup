@@ -564,7 +564,7 @@ class MenuBarApp(rumps.App):
         self.menu.add(menu_item)
         return menu_item
 
-    def add_show_files_file_menu_item(self):
+    def add_show_files_menu_item(self):
         self.add_menuitem('Show Files', self.show_files, 'f')
 
     def idle(self):
@@ -601,12 +601,30 @@ class MenuBarApp(rumps.App):
         self.add_menuitem('Continue Backup', self.continue_backup, 'c')
         self.add_menuitem('Skip Backup', self.skip_backup, 's')
         self.add_menuitem('Edit Exclude File', self.edit_exclude_file, 'x')
-        self.add_show_files_file_menu_item()
+        self.add_show_files_menu_item()
         self.menu.add(rumps.separator)
+        self.add_menuitem('Select all', self.select_all, 'a')
+        self.add_menuitem('Deselect all', self.deselect_all, 'd')
+        self.add_menuitem('Invert selection', self.invert_selection, 't')
         self.add_menuitem('Items excluded from backup (check to include):')
         for i, entry in enumerate(large_entries, start=1):
             self.add_large_menu_item(entry, i)
         self.total_size_menu_item = self.add_menuitem('')
+        self.update_backup_size()
+
+    def select_all(self, _):
+        for menu_item, _ in self.large_entry_menu_items:
+            menu_item.state = True
+        self.update_backup_size()
+
+    def deselect_all(self, _):
+        for menu_item, _ in self.large_entry_menu_items:
+            menu_item.state = False
+        self.update_backup_size()
+
+    def invert_selection(self, _):
+        for menu_item, _ in self.large_entry_menu_items:
+            menu_item.state = not menu_item.state
         self.update_backup_size()
 
     def add_large_menu_item(self, entry, index):
@@ -645,13 +663,13 @@ class MenuBarApp(rumps.App):
         self.total_bytes = total_bytes
         self.menu.clear()
         self.progress_menu_item = self.add_menuitem('')
-        self.add_show_files_file_menu_item()
+        self.add_show_files_menu_item()
         self.add_menuitem('Abort Backup', self.abort_backup, 'a')
         self.set_title(format_size(total_bytes))
 
     def update_progress(self, transferred):
         self.progress_menu_item.title = \
-            (f'{self.backup_name} {format_size(transferred)}'
+            (f'{self.backup_name}: {format_size(transferred)}'
              f' of {format_size(self.total_bytes)}')
         self.set_title(f'{transferred / self.total_bytes:.0%}')
 
