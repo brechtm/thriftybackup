@@ -254,10 +254,10 @@ class RCloneBackup:
                             - datetime.fromisoformat(timestamp_from_log(last_log)))
             forced = force and last_age > timedelta(0)   # there must be changes
             if last_age == timedelta(0):
-                print(f"The last local snapshot was already backed up")
+                print(f"{self.name}: the last local snapshot was already backed up")
                 return False
             elif last_age < self.interval and not forced:
-                print(f"Last backup is only {last_age} old (< {self.interval})")
+                print(f"{self.name}: last backup is only {last_age} old (< {self.interval})")
                 return False
         self.mount_snapshot()
         self.interface = interface
