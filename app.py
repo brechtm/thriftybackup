@@ -235,12 +235,12 @@ class RCloneBackup:
     def unmount_snapshot(self):
         run([UMOUNT, self.mount_point], check=True)        
 
-    def backup(self, interface, force=False):
+    def backup(self, interface):
         self.logs_path.mkdir(parents=True, exist_ok=True)
         self.rclone('mkdir', self.destination_latest, dry_run=False)
-        return self._backup(interface, force)
+        return self._backup(interface)
 
-    def _backup(self, interface, force):
+    def _backup(self, interface):
         local_timestamp = snapshot_datetime(self.snapshot)
         try:
             last_log = self.get_last_log()
@@ -252,11 +252,10 @@ class RCloneBackup:
         if last_log:
             last_age = (local_timestamp
                             - datetime.fromisoformat(timestamp_from_log(last_log)))
-            forced = force and last_age > timedelta(0)   # there must be changes
             if last_age == timedelta(0):
                 print(f"{self.name}: the last local snapshot was already backed up")
                 return False
-            elif last_age < self.interval and not forced:
+            elif last_age < self.interval:
                 print(f"{self.name}: last backup is only {last_age} old (< {self.interval})")
                 return False
         self.mount_snapshot()
@@ -531,19 +530,19 @@ class AppInterface(NSObject):
         self.process.cleanup()
 
 
-def main_loop(interface, echo, dry_run, force):
+def main_loop(interface, echo, dry_run):
     while True:
         config = Configuration(PATH / 'backups.toml',
                                echo=echo, dry_run=dry_run)
         for backup in config.values():
-            if backup.backup(interface, force=force):
+            if backup.backup(interface):
                 break   # only continue to next backup if current one is skipped
         time.sleep(15 * 60)
 
 
 class MenuBarApp(rumps.App):
     
-    def __init__(self, echo=False, dry_run=False, force=False):
+    def __init__(self, echo=False, dry_run=False):
         super().__init__('rclone backup', icon='rclone.icns', template=True,
                          quit_button=None)
         self.backup_name = None
@@ -557,8 +556,7 @@ class MenuBarApp(rumps.App):
         self.idle()
         self.interface = AppInterface(self)
         self.thread = Thread(target=main_loop,
-                             args=[self.interface, echo, dry_run, force],
-                             daemon=True)
+                             args=[self.interface, echo, dry_run], daemon=True)
         self.thread.start()
 
     def add_menuitem(self, title, callback=None, key=None):
@@ -692,7 +690,8 @@ end tell
 RE_KEEP = re.compile(r'(?P<days>\d+)\s*(d(ays?)?)?', re.IGNORECASE)
 
 RE_INTERVAL = re.compile(r'((?P<days>\d+?)\s*(d|days?))?\s*'
-                         r'((?P<hours>\d+?)\s*(h|hours?))?', re.IGNORECASE)
+                         r'((?P<hours>\d+?)\s*(h|hours?))?\s*'
+                         r'((?P<minutes>\d+?)\s*(m|minutes?))?', re.IGNORECASE)
 
 RE_THRESHOLD = re.compile(r'(?P<number>\d+)\s*(?P<unit>[KMGT])B?',
                           re.IGNORECASE)
@@ -768,7 +767,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     with pid.PidFile(piddir=PATH):
-        app = MenuBarApp(args.echo, args.dry_run, args.force)
+        app = MenuBarApp(args.echo, args.dry_run)
         app.run()
 
     # FIXME: never reached because app just exits program; handle another way
