@@ -317,7 +317,9 @@ class RCloneBackup:
                         print(f'{size}   {entry.path}', file=f)
                 # the following returns when the user chooses to continue the backup
                 exclude = self.interface.thresholdExceeded_(
-                    (self.name, backup_size, large_entries))
+                    (self.name, backup_size, large_entries,
+                     self.large_files_path, self.exclude_file,
+                     self.ncdu_export_path))
                 backup_size -= sum(entry.size for entry in exclude)
             else:
                 exclude = []
