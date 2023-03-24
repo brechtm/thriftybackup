@@ -314,7 +314,7 @@ class RCloneBackup:
                     for entry in large_entries:
                         size = format_size(entry.size, True)
                         print(f'{size}   {entry.path}', file=f)
-                # the following returns when the user chooses to continue the backup
+                # returns when the user chooses to continue the backup
                 exclude = self.interface.thresholdExceeded_(
                     (self.name, backup_size, large_entries,
                      self.large_files_path, self.exclude_file,
@@ -322,20 +322,21 @@ class RCloneBackup:
                 backup_size -= sum(entry.size for entry in exclude)
             else:
                 exclude = []
-            self.interface.startBackup_((self.name, backup_size))
-            backup_dir = (self.destination / timestamp_from_log(last_log)
-                        if last_log else None)
-            success = self.backup_sync(backup_dir, exclude)
-            if backup_dir:
-                # move the logs from the last backup to the backup dir
-                last_logs = '/' + last_log.replace('sync.log', '*.*')
-                self.rclone('move', self.destination, '--include', last_logs,
-                            backup_dir)
-                self.record_backup_size(backup_dir)
-            # copy logs for this backup to the remote
-            local_logs = self.file_path('*', '*')
-            self.rclone('copy', local_logs.parent, '--include', local_logs.name,
-                        self.destination)
+            if backup_size > 0:
+                self.interface.startBackup_((self.name, backup_size))
+                backup_dir = (self.destination / timestamp_from_log(last_log)
+                            if last_log else None)
+                success = self.backup_sync(backup_dir, exclude)
+                if backup_dir:
+                    # move the logs from the last backup to the backup dir
+                    last_logs = '/' + last_log.replace('sync.log', '*.*')
+                    self.rclone('move', '--include', last_logs,
+                                self.destination, backup_dir)
+                    self.record_backup_size(backup_dir)
+                # copy logs for this backup to the remote
+                local_logs = self.file_path('*', '*')
+                self.rclone('copy', '--include', local_logs.name,
+                            local_logs.parent, self.destination)
         self.interface.idle_()
         self.cleanup()
 
@@ -596,7 +597,7 @@ class MenuBarApp(rumps.App):
         self.ncdu_export_path = ncdu_export_path
         rumps.notification(f"{backup_name}: Backup size exceeds treshold", None,
                            f"Total backup size: {format_size(total_size)}")
-        self.set_title(f"{backup_name} {format_size(total_size)}",
+        self.set_title(f"{backup_name}: {format_size(total_size)}",
                        color=(1, 0, 0, 1))
         self.add_menuitem('Continue Backup', self.continue_backup, 'c')
         self.add_menuitem('Skip Backup', self.skip_backup, 's')
