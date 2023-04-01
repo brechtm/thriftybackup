@@ -360,10 +360,11 @@ class RCloneBackup:
 
     def backup_scout(self):
         tree = Directory('')
-        exclude = (['--exclude-from', self.exclude_file]
-                   if self.exclude_file.exists() else [])
+        args = ['--retries', '1']
+        if self.exclude_file.exists():
+            args.extend(['--exclude-from', self.exclude_file])
         try:
-            rclone_sync = self.sync_popen(*exclude, dry_run=True)
+            rclone_sync = self.sync_popen(*args, dry_run=True)
             scout_log = self.file_path('scout', 'log')
             with scout_log.open('wb') as log:
                 for line in rclone_sync.stderr:
