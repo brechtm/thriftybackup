@@ -24,6 +24,8 @@ PATH = Path(__file__).parent
 CONFIG_DIR = Path.home() / '.config' / 'thriftybackup'
 CONFIG_PATH = CONFIG_DIR / 'config.toml'
 
+CACHE_DIR = Path.home() / '.cache' / 'thriftybackup'
+
 
 class Entry:
     def __init__(self, path, size=None):
@@ -195,7 +197,7 @@ class RCloneBackup:
 
     @property
     def logs_path(self):
-        return PATH / 'logs' / self.name
+        return CACHE_DIR / self.name
 
     def file_path(self, label, extension):
         basename = self.logs_path / f'{self.name}_{self.timestamp}_{label}'
