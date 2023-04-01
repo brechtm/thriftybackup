@@ -21,6 +21,9 @@ import rumps
 
 PATH = Path(__file__).parent
 
+CONFIG_DIR = Path.home() / '.config' / 'thriftybackup'
+CONFIG_PATH = CONFIG_DIR / 'config.toml'
+
 
 class Entry:
     def __init__(self, path, size=None):
@@ -188,7 +191,7 @@ class RCloneBackup:
 
     @property
     def exclude_file(self):
-        return PATH / f'{self.name}.exclude'        
+        return CONFIG_DIR / f'{self.name}.exclude'        
 
     @property
     def logs_path(self):
@@ -533,8 +536,7 @@ class AppInterface(NSObject):
 
 def main_loop(interface, echo, dry_run):
     while True:
-        config = Configuration(PATH / 'backups.toml',
-                               echo=echo, dry_run=dry_run)
+        config = Configuration(CONFIG_PATH, echo=echo, dry_run=dry_run)
         for backup in config.values():
             if backup.backup(interface):
                 break   # only continue to next backup if current one is skipped
@@ -571,6 +573,7 @@ class MenuBarApp(rumps.App):
     def idle(self):
         self.title = None
         self.menu.clear()
+        self.add_menuitem('Edit configuration', self.edit_config_file, ',')
         self.add_menuitem('Quit', rumps.quit_application, 'q')
         self.backup_name = None
         self.exclude_file = None
@@ -681,6 +684,9 @@ class MenuBarApp(rumps.App):
     def skip_backup(self, _):
         self.quit()
 
+    def edit_config_file(self, _):
+        run(['open', '-a', 'TextEdit', CONFIG_PATH])
+
     def edit_exclude_file(self, _):
         Popen(['qlmanage', '-p', self.large_files_path], stderr=DEVNULL)
         run(['open', '-a', 'TextEdit', self.exclude_file])
@@ -767,7 +773,7 @@ class Configuration(dict):
                             echo=self.echo, dry_run=self.dry_run)
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--echo', action='store_true',
                         help="Echo the rclone commands before executing them")
@@ -784,6 +790,15 @@ if __name__ == "__main__":
     parser_list.add_argument('backup', help="The backup configuration for which"
                                             " to list snapshots")
     args = parser.parse_args()
+
+    if not CONFIG_PATH.exists():
+        print(f"Creating configuration file at {CONFIG_PATH}")
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH.write_text(CONFIG_TEMPLATE)
+        rumps.alert("ThriftyBackup",
+                    f"Created a sample configuration file at {CONFIG_PATH}."
+                    " Now, please select 'Edit configuration file' from the"
+                    " menu and add one or more backup configurations.")
 
     with pid.PidFile(piddir=PATH):
         app = MenuBarApp(args.echo, args.dry_run)
@@ -810,3 +825,26 @@ if __name__ == "__main__":
             backup.print_snapshot_sizes()
         case _:
             parser.print_help()
+
+
+CONFIG_TEMPLATE = f"""\
+## General settings
+## (uncomment and adjust)
+
+# rclone = "/usr/local/bin/rclone"
+# bwlimit = "400K"
+# keep_all = "7 days"
+# keep_daily = "31 days"
+
+## Backup configurations
+
+# [home]
+# source = "{Path.home()}"
+# destination = "backup:home"
+# interval = "4 hours"
+# threshold = "100 MB"
+"""
+
+
+if __name__ == "__main__":
+    main()
