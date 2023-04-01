@@ -283,7 +283,7 @@ class RCloneBackup:
         if self.echo or dry_run:
             print(' '.join(map(str, cmd)))
         if not dry_run:
-            return run(cmd, cwd=PATH, capture_output=capture, encoding='utf-8',
+            return run(cmd, capture_output=capture, encoding='utf-8',
                        check=True)
 
     def list_files(self, path, include=None, exclude=None, recursive=True,
