@@ -4,7 +4,6 @@ import argparse
 import json
 import plistlib
 import re
-import sys
 import time
 import tomllib
 
@@ -791,24 +790,9 @@ class Configuration(dict):
                             echo=self.echo, dry_run=self.dry_run)
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--echo', action='store_true',
-                        help="Echo the rclone commands before executing them")
-    parser.add_argument('--dry-run', action='store_true',
-                        help="Dry-run rclone commands")
-    subparsers = parser.add_subparsers(dest='command', )#help='')
-    parser_backup = subparsers.add_parser('backup', help='start a backup')
-    parser_backup.add_argument('name', nargs='*',
-                               help="The name of a backup configuration")
-    parser_backup.add_argument('-f', '--force', action='store_true',
-                               help="Force a backup regardless of when the last"
-                                    " backup was performed")
-    parser_list = subparsers.add_parser('list', help='list backup snapshots')
-    parser_list.add_argument('backup', help="The backup configuration for which"
-                                            " to list snapshots")
-    args = parser.parse_args()
 
+
+def app(echo, dry_run):
     if not CONFIG_PATH.exists():
         print(f"Creating configuration file at {CONFIG_PATH}")
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -819,22 +803,30 @@ def main():
                     " menu and add one or more backup configurations.")
 
     with pid.PidFile(piddir=PATH):
-        app = MenuBarApp(args.echo, args.dry_run)
+        app = MenuBarApp(echo, dry_run)
         app.run()
 
     # FIXME: never reached because app just exits program; handle another way
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--echo', action='store_true',
+                        help="Echo the rclone commands before executing them")
+    parser.add_argument('--dry-run', action='store_true',
+                        help="Dry-run rclone commands")
+    subparsers = parser.add_subparsers(dest='command', )#help='')
+    parser_app = subparsers.add_parser('app', help='start the menu bar app')
+    parser_list = subparsers.add_parser('list', help='list backup snapshots')
+    parser_list.add_argument('backup', help="The backup configuration for which"
+                                            " to list snapshots")
+    args = parser.parse_args()
+
     match args.command:
-        case 'backup':
-            names = args.name or config.keys()
-            for name in names:
-                backup = config[name]
-                try:
-                    if backup.backup(force=args.force):
-                        break   # only continue to next backup if current one is skipped
-                except pid.PidFileError:
-                    if sys.stdout.isatty():
-                        raise SystemExit("An rclone backup is already in progress")
+        case 'app':
+            app(args.echo, args.dry_run)
         case 'list':
+            config = Configuration(CONFIG_PATH, echo=args.echo,
+                                   dry_run=args.dry_run)
             if args.backup not in config:
                 msg = (f"There is no backup named '{args.backup}'. Choose one"
                        f" from:\n" + '\n'.join(f'- {n}' for n in config))
