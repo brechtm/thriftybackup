@@ -1,3 +1,5 @@
 *.log
 /.venv
+/build
+/dist
 /rclone_backup.py.pid
