@@ -1,6 +1,8 @@
 
+import os
 import time
 
+from pathlib import Path
 from queue import Queue
 from subprocess import run, Popen, DEVNULL, CalledProcessError
 from threading import Thread
@@ -141,6 +143,7 @@ class MenuBarApp(rumps.App):
         self.title = None
         self.menu.clear()
         self.add_menuitem('Edit configuration', self.edit_config_file, ',')
+        self.add_menuitem('Install command-line tool', self.install_thrifty, 'c')
         self.add_menuitem('Quit', rumps.quit_application, 'q')
         self.backup_name = None
         self.exclude_file = None
@@ -255,6 +258,16 @@ class MenuBarApp(rumps.App):
     def edit_config_file(self, _):
         run(['open', '-a', 'TextEdit', CONFIG_PATH])
 
+    def install_thrifty(self, _):
+        if THRIFTY_PROXY.exists():
+            rumps.alert("ThriftyBackup",
+                        f"{THRIFTY_PROXY} already exists; not overwriting it.")
+            return
+        THRIFTY_PROXY.write_text(f"#!/bin/bash\n{THRIFTY} $@")
+        THRIFTY_PROXY.chmod(0o744)
+        rumps.alert("ThriftyBackup",
+                    f"Installed 'thrifty' to {THRIFTY_PROXY.parent}")
+
     def edit_exclude_file(self, _):
         Popen(['qlmanage', '-p', self.large_files_path], stderr=DEVNULL)
         run(['open', '-a', 'TextEdit', self.exclude_file])
@@ -271,6 +284,10 @@ class MenuBarApp(rumps.App):
         self.interface.cleanUp()
         rumps.quit_application()
 
+
+APP_CONTENTS_PATH = Path(os.environ.get('RESOURCEPATH', __file__)).parent
+THRIFTY = APP_CONTENTS_PATH / 'MacOS' / 'thrifty'
+THRIFTY_PROXY = Path('/usr/local/bin') / THRIFTY.name
 
 TERMINAL_NCDU = """
 tell app "Terminal"
