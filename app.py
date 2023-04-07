@@ -224,7 +224,7 @@ class RCloneBackup:
             del self._tempdir
 
     def get_last_snapshot(self):
-        du_info = self._run([DISKUTIL, 'info', '-plist', 'Data'],
+        du_info = self._run([DISKUTIL, 'info', '-plist', '/System/Volumes/Data'],
                             echo=self.echo, check=True, capture_output=True).stdout
         device = plistlib.loads(du_info)['DeviceIdentifier']
         while True:
