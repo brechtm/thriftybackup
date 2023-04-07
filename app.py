@@ -843,6 +843,7 @@ CONFIG_TEMPLATE = f"""\
 ## Backup configurations
 
 # [home]
+## passes ~/.config/thriftybackup/home.exclude as exclude file to rclone
 # source = "{Path.home()}"
 # destination = "backup:home"
 # interval = "4 hours"
