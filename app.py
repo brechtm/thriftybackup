@@ -14,7 +14,6 @@ from subprocess import run, Popen, PIPE, DEVNULL, CalledProcessError
 from tempfile import TemporaryDirectory
 from threading import Thread
 
-import pid
 import rumps
 
 
@@ -801,12 +800,9 @@ def app(echo, dry_run):
                     f"Created a sample configuration file at {CONFIG_PATH}."
                     " Now, please select 'Edit configuration file' from the"
                     " menu and add one or more backup configurations.")
+    app = MenuBarApp(echo, dry_run)
+    app.run()
 
-    with pid.PidFile(piddir=PATH):
-        app = MenuBarApp(echo, dry_run)
-        app.run()
-
-    # FIXME: never reached because app just exits program; handle another way
 
 def main():
     parser = argparse.ArgumentParser()
