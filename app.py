@@ -211,6 +211,12 @@ class RCloneBackup:
     def large_files_path(self):
         return self.file_path('large', 'log')
 
+    def _run(self, args, echo=False, dry_run=False, **kwargs):
+        if echo:
+            print(' '.join(map(str, args)))
+        if not dry_run:
+            return run(args, **kwargs)
+
     def cleanup(self):
         # TODO: stop thread
         if hasattr(self, '_tempdir'):
@@ -218,16 +224,16 @@ class RCloneBackup:
             del self._tempdir
 
     def get_last_snapshot(self):
-        du_info = run([DISKUTIL, 'info', '-plist', 'Data'],
-                      check=True, capture_output=True).stdout
+        du_info = self._run([DISKUTIL, 'info', '-plist', 'Data'],
+                            echo=self.echo, check=True, capture_output=True).stdout
         device = plistlib.loads(du_info)['DeviceIdentifier']
         while True:
-            output = run([DISKUTIL, 'apfs', 'listSnapshots', '-plist', device],
-                         check=True, capture_output=True).stdout
+            output = self._run([DISKUTIL, 'apfs', 'listSnapshots', '-plist', device],
+                               echo=self.echo, check=True, capture_output=True).stdout
             snapshot = plistlib.loads(output)['Snapshots'][-1]['SnapshotName']
             if datetime.now() - snapshot_datetime(snapshot) < timedelta(hours=1):
                 break
-            run([TMUTIL, 'localsnapshot'], check=True)
+            self._run([TMUTIL, 'localsnapshot'], echo=self.echo, check=True)
         return device, snapshot
 
     def mount_snapshot(self):
@@ -280,11 +286,8 @@ class RCloneBackup:
         """
         dry_run = self.dry_run if dry_run is None else dry_run
         cmd = [self.rclone_path, *args]
-        if self.echo or dry_run:
-            print(' '.join(map(str, cmd)))
-        if not dry_run:
-            return run(cmd, capture_output=capture, encoding='utf-8',
-                       check=True)
+        return self._run(cmd, echo=self.echo or dry_run, dry_run=dry_run,
+                         capture_output=capture, encoding='utf-8', check=True)
 
     def list_files(self, path, include=None, exclude=None, recursive=True,
                    dirs_only=False, files_only=False):
