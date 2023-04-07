@@ -372,7 +372,9 @@ class RCloneBackup:
             with scout_log.open('wb') as log:
                 for line in rclone_sync.stderr:
                     log.write(line)
-                    msg = json.loads(line)
+                    if not (msg := try_json(line)):
+                        print(line)
+                        continue
                     if msg.get('skipped') == 'copy':
                         rel_path = Path(msg['object'])
                         tree.add_file(rel_path, msg['size'])
@@ -403,7 +405,9 @@ class RCloneBackup:
             with sync_log.open('wb') as log:
                 for line in sync.stderr:
                     log.write(line)
-                    msg = json.loads(line)
+                    if not (msg := try_json(line)):
+                        print(line)
+                        continue
                     if size := self._get_item_size(msg):
                         transferred += size
                         self.interface.updateProgress_(transferred)
@@ -443,6 +447,13 @@ class RCloneBackup:
             print(f"{timestamp:18} {format_size(size, True):>12}")
             total += size
         print(f"{'Total:':18} {format_size(total, True):>12}")
+
+
+def try_json(line):
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        return None
 
 
 def timestamp_from_log(log_filename):
