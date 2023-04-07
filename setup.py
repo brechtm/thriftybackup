@@ -2,11 +2,11 @@ from setuptools import setup
 
 OPTIONS = {
     'argv_emulation': False,
-    'argv_inject': ['app'],
     'plist': {
         'LSUIElement': True,
     },
-    'packages': ['pid', 'rumps'],
+    'packages': ['rumps'],
+    'extra_scripts': ['thrifty.py'],
 }
 
 setup(
