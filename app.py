@@ -583,6 +583,7 @@ class MenuBarApp(rumps.App):
         self.ncdu_export_path = None
 
     def prepare(self, backup_name):
+        self.menu.clear()
         self.add_menuitem(f'{backup_name}: determining backup size...')
 
     def set_title(self, title, color=None):
