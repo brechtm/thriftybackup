@@ -148,7 +148,6 @@ class RCloneBackup:
             if error.returncode == 1:   # connection error
                 return False
             raise
-        
         if last_log:
             log_timestamp = timestamp_from_log(last_log)
             last_age = local_timestamp - datetime.fromisoformat(log_timestamp)
@@ -160,8 +159,7 @@ class RCloneBackup:
                 return False
         self.mount_snapshot()
         self.interface = interface
-        self.backup_thread(last_log)
-        return True
+        return self.perform_backup(last_log)
 
     def rclone(self, *args, dry_run=None, capture=False) -> Popen or None:
         """Run rclone with the given arguments
@@ -172,7 +170,7 @@ class RCloneBackup:
           capture: capture the output (in stdout attribute of return value)
         
         Returns:
-          Popen
+          rclone Popen object
         """
         dry_run = self.dry_run if dry_run is None else dry_run
         cmd = [self.rclone_path, *args]
@@ -202,41 +200,43 @@ class RCloneBackup:
                              f" {self.destination}!")
         return last_log
 
-    def backup_thread(self, last_log):
+    def perform_backup(self, last_log):
         self.interface.prepare_(self.name)
         self.tree, large_entries = self.backup_scout()
         backup_size = self.tree.size
-        if backup_size > 0:
-            if large_entries:
-                with self.large_files_path.open('w') as f:
-                    for entry in large_entries:
-                        size = format_size(entry.size, True)
-                        print(f'{size}   {entry.path}', file=f)
-                # returns when the user chooses to continue the backup
-                exclude = self.interface.thresholdExceeded_(
-                    (self.name, backup_size, large_entries,
-                     self.large_files_path, self.exclude_file,
-                     self.ncdu_export_path))
-                backup_size -= sum(entry.size for entry in exclude)
-            else:
-                exclude = []
-            if backup_size > 0:
-                self.interface.startBackup_((self.name, backup_size))
-                backup_dir = (self.destination / timestamp_from_log(last_log)
-                            if last_log else None)
-                success = self.backup_sync(backup_dir, exclude)
-                if backup_dir:
-                    # move the logs from the last backup to the backup dir
-                    last_logs = '/' + last_log.replace('sync.log', '*.*')
-                    self.rclone('move', '--include', last_logs,
-                                self.destination, backup_dir)
-                    self.record_backup_size(backup_dir)
-                # copy logs for this backup to the remote
-                local_logs = self.file_path('*', '*')
-                self.rclone('copy', '--include', local_logs.name,
-                            local_logs.parent, self.destination)
+        if backup_size == 0:
+            return False
+        if large_entries:
+            with self.large_files_path.open('w') as f:
+                for entry in large_entries:
+                    size = format_size(entry.size, True)
+                    print(f'{size}   {entry.path}', file=f)
+            # returns when the user chooses to continue the backup
+            exclude = self.interface.thresholdExceeded_(
+                (self.name, backup_size, large_entries, self.large_files_path,
+                 self.exclude_file, self.ncdu_export_path))
+            backup_size -= sum(entry.size for entry in exclude)
+        else:
+            exclude = []
+        if backup_size == 0:
+            return False
+        self.interface.startBackup_((self.name, backup_size))
+        backup_dir = (self.destination / timestamp_from_log(last_log)
+                    if last_log else None)
+        success = self.backup_sync(backup_dir, exclude)
+        if backup_dir:
+            # move the logs from the last backup to the backup dir
+            last_logs = '/' + last_log.replace('sync.log', '*.*')
+            self.rclone('move', '--include', last_logs,
+                        self.destination, backup_dir)
+            self.record_backup_size(backup_dir)
+        # copy logs for this backup to the remote
+        local_logs = self.file_path('*', '*')
+        self.rclone('copy', '--include', local_logs.name,
+                    local_logs.parent, self.destination)
         self.interface.idle_()
         self.cleanup()
+        return True
 
     def sync_popen(self, *args, dry_run=False):
         snapshot_source = self.mount_point / self.source.relative_to('/')
