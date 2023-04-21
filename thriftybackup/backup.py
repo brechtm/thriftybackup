@@ -309,6 +309,8 @@ class RCloneBackup:
             print(f"rclone returned non-zero exit status {rc} - {info}")
             print(f"The log file is {sync_log}")
             return False
+        transferred_filename = f'{self.name}_{self.timestamp}_transferred_{transferred}'
+        self.rclone('touch', self.destination / transferred_filename)
         return True
 
     def _get_item_size(self, log_msg):
