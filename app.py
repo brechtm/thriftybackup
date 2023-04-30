@@ -2,6 +2,7 @@
 import os
 import time
 
+from functools import partial
 from pathlib import Path
 from queue import Queue
 from subprocess import run, Popen, DEVNULL, CalledProcessError
@@ -103,9 +104,13 @@ class AppInterface(NSObject):
         self.process.cleanup()
 
 
+def load_configuration(echo, dry_run):
+    return Configuration(CONFIG_PATH, echo=echo, dry_run=dry_run)
+
+
 def main_loop(interface, echo, dry_run):
     while True:
-        config = Configuration(CONFIG_PATH, echo=echo, dry_run=dry_run)
+        config = load_configuration(echo=echo, dry_run=dry_run)
         for backup in config.values():
             if backup.backup(interface):
                 break   # only continue to next backup if current one is skipped
@@ -117,11 +122,9 @@ class MenuBarApp(rumps.App):
     def __init__(self, echo=False, dry_run=False):
         super().__init__('rclone backup', icon='rclone.icns', template=True,
                          quit_button=None)
+        self.config = load_configuration(echo=echo, dry_run=dry_run)
         self.backup_name = None
         self.total_size = None
-        self.large_files_path = None
-        self.exclude_file = None
-        self.ncdu_export_path = None
         self.large_entry_menu_items = []
         self.total_size_menu_item = None
         self.progress_menu_item = None
@@ -131,17 +134,29 @@ class MenuBarApp(rumps.App):
                              args=[self.interface, echo, dry_run], daemon=True)
         self.thread.start()
 
-    def add_menuitem(self, title, callback=None, key=None):
+    def add_menuitem(self, title, callback=None, key=None, parent=None):
         menu_item = rumps.MenuItem(title, callback=callback, key=key)
-        self.menu.add(menu_item)
+        (self.menu if parent is None else parent).add(menu_item)
         return menu_item
 
-    def add_show_files_menu_item(self):
-        self.add_menuitem('Show Files', self.show_files, 'f')
+    def add_show_files_menu_item(self, ncdu_export_path):
+        show_files = partial(self.show_files, ncdu_export_path=ncdu_export_path)
+        self.add_menuitem('Show Files', show_files, 'f')
 
     def idle(self):
         self.title = None
         self.menu.clear()
+        for backup_name, backup in self.config.items():
+            menu = self.add_menuitem(backup_name)
+            edit_exclude = partial(self.edit_exclude_file,
+                                   exclude_file=backup.exclude_file)
+            self.add_menuitem('Edit exclude file', edit_exclude, parent=menu)
+            menu.add(rumps.separator)
+            self.add_menuitem('Last backups:', parent=menu)
+            for snapshot, size in backup.last_backups():
+                size_str = format_size(size, True).replace(' ', '\u2007')
+                self.add_menuitem(f"{snapshot}\t{size_str}", parent=menu)   # TODO: callback=ncdu
+        self.menu.add(rumps.separator)
         self.add_menuitem('Edit configuration', self.edit_config_file, ',')
         self.add_menuitem('Install command-line tool', self.install_thrifty, 'c')
         self.add_menuitem('Quit', rumps.quit_application, 'q')
@@ -175,7 +190,10 @@ class MenuBarApp(rumps.App):
                        color=(1, 0, 0, 1))
         self.add_menuitem('Continue Backup', self.continue_backup, 'c')
         self.add_menuitem('Skip Backup', self.skip_backup, 's')
-        self.add_menuitem('Edit Exclude File', self.edit_exclude_file, 'x')
+        edit_exclude_file = partial(self.edit_exclude_file,
+                                    exclude_file=self.exclude_file,
+                                    large_files_file=self.large_files_path)
+        self.add_menuitem('Edit Exclude File', edit_exclude_file, 'x')
         self.add_show_files_menu_item()
         self.menu.add(rumps.separator)
         self.add_menuitem('Select all', self.select_all, 'a')
@@ -268,9 +286,10 @@ class MenuBarApp(rumps.App):
         rumps.alert("ThriftyBackup",
                     f"Installed 'thrifty' to {THRIFTY_PROXY.parent}")
 
-    def edit_exclude_file(self, _):
-        Popen(['qlmanage', '-p', self.large_files_path], stderr=DEVNULL)
-        run(['open', '-a', 'TextEdit', self.exclude_file])
+    def edit_exclude_file(self, _, exclude_file, large_files_file=None):
+        run(['open', '-a', 'TextEdit', exclude_file])
+        if large_files_file:
+            Popen(['qlmanage', '-p', large_files_file], stderr=DEVNULL)
 
     def show_files(self, _):
         script = TERMINAL_NCDU.format(file=self.ncdu_export_path)

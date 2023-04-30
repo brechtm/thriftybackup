@@ -177,20 +177,32 @@ class RCloneBackup:
         return self._run(cmd, echo=self.echo or dry_run, dry_run=dry_run,
                          capture_output=capture, encoding='utf-8', check=True)
 
-    def list_files(self, path, include=None, exclude=None, recursive=True,
+    def list_files(self, *include, exclude=None, recursive=True,
                    dirs_only=False, files_only=False):
         args = ((['--dirs-only'] if dirs_only else [])
                 + (['--files-only'] if files_only else [])
-                + (['--include', include] if include else [])
+                + [*chain.from_iterable(['--include', inc] for inc in include)]
                 + (['--exclude', exclude] if exclude else [])
                 + (['--recursive'] if recursive else []))
-        list_cmd = self.rclone('lsf', path, '--dir-slash=false', *args,
-                               dry_run=False, capture=True)
-        return sorted(list_cmd.stdout.split())
+        list_cmd = self.rclone('lsf', self.destination, '--dir-slash=false',
+                               *args, dry_run=False, capture=True)
+        return sorted(list_cmd.stdout.splitlines())
+
+    def last_backups(self, number=10):
+        snapshots = self.list_files(recursive=False, dirs_only=True)
+        assert snapshots.pop() == 'latest'
+        dirs_list = ','.join(snapshots[-number:])
+        last_size_file = f'/{self.name}_*_transferred_*'
+        size_files = f"/{{{dirs_list}}}/{self.name}_*_transferred_*"
+        sizes = self.list_files(last_size_file, size_files, recursive=True,
+                                files_only=True)
+        for size_path in reversed(sizes):
+            _, snapshot, _, size = size_path.rsplit('_', maxsplit=3)
+            yield snapshot, int(size)
 
     def get_last_log(self):
-        logs = self.list_files(self.destination, include=f"/{self.name}_*_sync.log",
-                               recursive=False, files_only=True)
+        logs = self.list_files(f"/{self.name}_*_sync.log", recursive=False,
+                               files_only=True)
         if not logs:  # this is the first backup
             return None
         try:
@@ -226,7 +238,7 @@ class RCloneBackup:
         success = self.backup_sync(backup_dir, exclude)
         if backup_dir:
             # move the logs from the last backup to the backup dir
-            last_logs = '/' + last_log.replace('sync.log', '*.*')
+            last_logs = '/' + last_log.replace('sync.log', '*')
             self.rclone('move', '--include', last_logs,
                         self.destination, backup_dir)
             self.record_backup_size(backup_dir)
@@ -328,9 +340,8 @@ class RCloneBackup:
     RE_SIZE = re.compile(r"^(.+)\/.*_\1_size_(\d+)$")
 
     def print_snapshot_sizes(self):
-        size_files = self.list_files(self.destination,
-                                    include=f"/*/{self.name}_*_size_*",
-                                    files_only=True)
+        size_files = self.list_files(f"/*/{self.name}_*_size_*",
+                                     files_only=True)
         total = 0
         print(f"Size of snapshots in {self.destination}")
         for path in size_files:
