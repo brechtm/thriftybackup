@@ -213,7 +213,7 @@ class RCloneBackup:
         return last_log
 
     def perform_backup(self, last_log):
-        self.interface.prepare_(self.name)
+        self.interface.prepare_(self)
         self.tree, large_entries = self.backup_scout()
         backup_size = self.tree.size
         if backup_size == 0:
@@ -225,14 +225,13 @@ class RCloneBackup:
                     print(f'{size}   {entry.path}', file=f)
             # returns when the user chooses to continue the backup
             exclude = self.interface.thresholdExceeded_(
-                (self.name, backup_size, large_entries, self.large_files_path,
-                 self.exclude_file, self.ncdu_export_path))
+                (self, backup_size, large_entries))
             backup_size -= sum(entry.size for entry in exclude)
         else:
             exclude = []
         if backup_size == 0:
             return False
-        self.interface.startBackup_((self.name, backup_size))
+        self.interface.startBackup_((self, backup_size))
         backup_dir = (self.destination / timestamp_from_log(last_log)
                     if last_log else None)
         success = self.backup_sync(backup_dir, exclude)

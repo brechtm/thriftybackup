@@ -54,11 +54,11 @@ class AppInterface(NSObject):
     def _idle_(self, _):
         self.app.idle()
         
-    def prepare_(self, backup_name):
-        self.pyobjc_performSelectorOnMainThread_withObject_('_prepare:', backup_name)
+    def prepare_(self, backup):
+        self.pyobjc_performSelectorOnMainThread_withObject_('_prepare:', backup)
 
-    def _prepare_(self, backup_name):
-        self.app.prepare(backup_name)
+    def _prepare_(self, backup):
+        self.app.prepare(backup)
     
     def thresholdExceeded_(self, args):
         self.pyobjc_performSelectorOnMainThread_withObject_('_thresholdExceeded:', args)
@@ -123,7 +123,7 @@ class MenuBarApp(rumps.App):
         super().__init__('rclone backup', icon='rclone.icns', template=True,
                          quit_button=None)
         self.config = load_configuration(echo=echo, dry_run=dry_run)
-        self.backup_name = None
+        self.backup = None
         self.total_size = None
         self.large_entry_menu_items = []
         self.total_size_menu_item = None
@@ -145,6 +145,7 @@ class MenuBarApp(rumps.App):
 
     def idle(self):
         self.title = None
+        self.backup = None
         self.menu.clear()
         for backup_name, backup in self.config.items():
             menu = self.add_menuitem(backup_name)
@@ -160,13 +161,10 @@ class MenuBarApp(rumps.App):
         self.add_menuitem('Edit configuration', self.edit_config_file, ',')
         self.add_menuitem('Install command-line tool', self.install_thrifty, 'c')
         self.add_menuitem('Quit', rumps.quit_application, 'q')
-        self.backup_name = None
-        self.exclude_file = None
-        self.ncdu_export_path = None
 
-    def prepare(self, backup_name):
+    def prepare(self, backup):
         self.menu.clear()
-        self.add_menuitem(f'{backup_name}: determining backup size...')
+        self.add_menuitem(f'{backup.name}: determining backup size...')
 
     def set_title(self, title, color=None):
         self.title = f' {title}'
@@ -177,24 +175,20 @@ class MenuBarApp(rumps.App):
             string = NSAttributedString.alloc().initWithString_attributes_(self.title, attributes)
             self._nsapp.nsstatusitem.setAttributedTitle_(string)
 
-    def threshold_exceeded(self, backup_name, total_size, large_entries,
-                           large_files_path, exclude_file, ncdu_export_path):
+    def threshold_exceeded(self, backup, total_size, large_entries):
         self.menu.clear()
         self.total_size = total_size
-        self.large_files_path = large_files_path
-        self.exclude_file = exclude_file
-        self.ncdu_export_path = ncdu_export_path
-        rumps.notification(f"{backup_name}: Backup size exceeds treshold", None,
+        rumps.notification(f"{backup.name}: Backup size exceeds treshold", None,
                            f"Total backup size: {format_size(total_size)}")
-        self.set_title(f"{backup_name}: {format_size(total_size)}",
+        self.set_title(f"{backup.name}: {format_size(total_size)}",
                        color=(1, 0, 0, 1))
         self.add_menuitem('Continue Backup', self.continue_backup, 'c')
         self.add_menuitem('Skip Backup', self.skip_backup, 's')
         edit_exclude_file = partial(self.edit_exclude_file,
-                                    exclude_file=self.exclude_file,
-                                    large_files_file=self.large_files_path)
+                                    exclude_file=backup.exclude_file,
+                                    large_files_file=backup.large_files_path)
         self.add_menuitem('Edit Exclude File', edit_exclude_file, 'x')
-        self.add_show_files_menu_item()
+        self.add_show_files_menu_item(backup.ncdu_export_path)
         self.menu.add(rumps.separator)
         self.add_menuitem('Select all', self.select_all, 'a')
         self.add_menuitem('Deselect all', self.deselect_all, 'd')
@@ -251,18 +245,18 @@ class MenuBarApp(rumps.App):
                 exclude.append(entry)
         self.interface.continueBackup_(exclude)
 
-    def start_backup(self, backup_name, total_bytes):
-        self.backup_name = backup_name
+    def start_backup(self, backup, total_bytes):
+        self.backup = backup
         self.total_bytes = total_bytes
         self.menu.clear()
-        self.progress_menu_item = self.add_menuitem('')
-        self.add_show_files_menu_item()
+        self.progress_menu_item = self.add_menuitem('Starting backup...')
+        self.add_show_files_menu_item(backup.ncdu_export_path)
         self.add_menuitem('Abort Backup', self.abort_backup, 'a')
         self.set_title(format_size(total_bytes))
 
     def update_progress(self, transferred):
         self.progress_menu_item.title = \
-            (f'{self.backup_name}: {format_size(transferred)}'
+            (f'{self.backup.name}: {format_size(transferred)}'
              f' of {format_size(self.total_bytes)}')
         self.set_title(f'{transferred / self.total_bytes:.0%}')
 
@@ -291,8 +285,8 @@ class MenuBarApp(rumps.App):
         if large_files_file:
             Popen(['qlmanage', '-p', large_files_file], stderr=DEVNULL)
 
-    def show_files(self, _):
-        script = TERMINAL_NCDU.format(file=self.ncdu_export_path)
+    def show_files(self, _, ncdu_export_path):
+        script = TERMINAL_NCDU.format(file=ncdu_export_path)
         run(['osascript', '-e', script])
 
     def abort_backup(self, _):
