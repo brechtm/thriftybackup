@@ -1,10 +1,9 @@
 
 import os
-import time
 
 from functools import partial
 from pathlib import Path
-from queue import Queue
+from queue import Empty, Queue
 from subprocess import run, Popen, DEVNULL, CalledProcessError
 from threading import Thread
 
@@ -60,24 +59,25 @@ class AppInterface(NSObject):
     def _prepare_(self, backup):
         self.app.prepare(backup)
     
-    def thresholdExceeded_(self, args):
+    def thresholdExceeded_size_largeEntries_(self, backup, backup_size, large_entries):
+        args = (backup, backup_size, large_entries)
         self.pyobjc_performSelectorOnMainThread_withObject_('_thresholdExceeded:', args)
         return self._queue.get()
 
     def _thresholdExceeded_(self, args):
         self.app.threshold_exceeded(*args)
 
-    def startBackup_(self, args):
-        self.pyobjc_performSelectorOnMainThread_withObject_('_startBackup:', args)
+    def startBackup_size_(self, backup, backup_size):
+        self.pyobjc_performSelectorOnMainThread_withObject_('_startBackup:', (backup, backup_size))
 
     def _startBackup_(self, args):
         self.app.start_backup(*args)
 
-    def updateProgress_(self, transferred_bytes):
-        self.pyobjc_performSelectorOnMainThread_withObject_('_updateProgress:', transferred_bytes)
+    def updateProgress_transferred_(self, backup, transferred_bytes):
+        self.pyobjc_performSelectorOnMainThread_withObject_('_updateProgress:', (backup, transferred_bytes))
         
-    def _updateProgress_(self, transferred_bytes):
-        self.app.update_progress(transferred_bytes)
+    def _updateProgress_(self, args):
+        self.app.update_progress(*args)
     
     def quitApp_(self, success):
         self.pyobjc_performSelectorOnMainThread_withObject_('_quitApp:', success)
@@ -91,6 +91,9 @@ class AppInterface(NSObject):
         
     def continueBackup_(self, excluded):
         self._queue.put_nowait(excluded)
+
+    def skipBackup_(self, _=None):
+        self._queue.put_nowait(None)
 
     def abortBackup(self):
         # ALT: just kill rclone process from this thread? (call Popen.terminate())
@@ -108,13 +111,19 @@ def load_configuration(echo, dry_run):
     return Configuration(CONFIG_PATH, echo=echo, dry_run=dry_run)
 
 
-def main_loop(interface, echo, dry_run):
+CHECK_INTERVAL = 5 * 60
+
+
+def main_loop(queue, interface, echo, dry_run):
     while True:
-        config = load_configuration(echo=echo, dry_run=dry_run)
-        for backup in config.values():
-            if backup.backup(interface):
-                break   # only continue to next backup if current one is skipped
-        time.sleep(15 * 60)
+        try:
+            backup = queue.get(timeout=CHECK_INTERVAL)
+            backup.backup(interface, force=True)
+        except Empty:
+            config = load_configuration(echo=echo, dry_run=dry_run)
+            for backup in config.values():
+                if backup.backup(interface):
+                    break   # only continue to next backup if current one is skipped
 
 
 class MenuBarApp(rumps.App):
@@ -123,15 +132,15 @@ class MenuBarApp(rumps.App):
         super().__init__('rclone backup', icon='rclone.icns', template=True,
                          quit_button=None)
         self.config = load_configuration(echo=echo, dry_run=dry_run)
-        self.backup = None
         self.total_size = None
         self.large_entry_menu_items = []
         self.total_size_menu_item = None
         self.progress_menu_item = None
         self.idle()
+        self.queue = Queue(maxsize=1)
         self.interface = AppInterface(self)
         self.thread = Thread(target=main_loop,
-                             args=[self.interface, echo, dry_run], daemon=True)
+                             args=[self.queue, self.interface, echo, dry_run])
         self.thread.start()
 
     def add_menuitem(self, title, callback=None, key=None, parent=None):
@@ -145,10 +154,11 @@ class MenuBarApp(rumps.App):
 
     def idle(self):
         self.title = None
-        self.backup = None
         self.menu.clear()
         for backup_name, backup in self.config.items():
             menu = self.add_menuitem(backup_name)
+            backup_now = partial(self.backup_now, backup=backup)
+            self.add_menuitem('Backup now', backup_now, parent=menu)
             edit_exclude = partial(self.edit_exclude_file,
                                    exclude_file=backup.exclude_file)
             self.add_menuitem('Edit exclude file', edit_exclude, parent=menu)
@@ -161,6 +171,9 @@ class MenuBarApp(rumps.App):
         self.add_menuitem('Edit configuration', self.edit_config_file, ',')
         self.add_menuitem('Install command-line tool', self.install_thrifty, 'c')
         self.add_menuitem('Quit', rumps.quit_application, 'q')
+
+    def backup_now(self, _, backup):
+        self.queue.put(backup)
 
     def prepare(self, backup):
         self.menu.clear()
@@ -246,7 +259,6 @@ class MenuBarApp(rumps.App):
         self.interface.continueBackup_(exclude)
 
     def start_backup(self, backup, total_bytes):
-        self.backup = backup
         self.total_bytes = total_bytes
         self.menu.clear()
         self.progress_menu_item = self.add_menuitem('Starting backup...')
@@ -254,9 +266,9 @@ class MenuBarApp(rumps.App):
         self.add_menuitem('Abort Backup', self.abort_backup, 'a')
         self.set_title(format_size(total_bytes))
 
-    def update_progress(self, transferred):
+    def update_progress(self, backup, transferred):
         self.progress_menu_item.title = \
-            (f'{self.backup.name}: {format_size(transferred)}'
+            (f'{backup.name}: {format_size(transferred)}'
              f' of {format_size(self.total_bytes)}')
         self.set_title(f'{transferred / self.total_bytes:.0%}')
 
@@ -265,7 +277,7 @@ class MenuBarApp(rumps.App):
     # - continue but exclude ml dirs/files
 
     def skip_backup(self, _):
-        self.quit()
+        self.interface.skipBackup_()
 
     def edit_config_file(self, _):
         run(['open', '-a', 'TextEdit', CONFIG_PATH])

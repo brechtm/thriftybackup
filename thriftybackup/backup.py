@@ -138,7 +138,7 @@ class RCloneBackup:
     def unmount_snapshot(self):
         run([UMOUNT, self.mount_point], check=True)        
 
-    def backup(self, interface):
+    def backup(self, interface, force=False):
         self.logs_path.mkdir(parents=True, exist_ok=True)
         self.rclone('mkdir', self.destination_latest, dry_run=False)
         local_timestamp = snapshot_datetime(self.snapshot)
@@ -154,7 +154,7 @@ class RCloneBackup:
             if last_age == timedelta(0):
                 print(f"{self.name}: the last local snapshot was already backed up")
                 return False
-            elif last_age < self.interval:
+            elif not force and last_age < self.interval:
                 print(f"{self.name}: last backup is only {last_age} old (< {self.interval})")
                 return False
         self.mount_snapshot()
@@ -216,38 +216,40 @@ class RCloneBackup:
         self.interface.prepare_(self)
         self.tree, large_entries = self.backup_scout()
         backup_size = self.tree.size
-        if backup_size == 0:
-            return False
+        backup_performed = False
         if large_entries:
             with self.large_files_path.open('w') as f:
                 for entry in large_entries:
                     size = format_size(entry.size, True)
                     print(f'{size}   {entry.path}', file=f)
-            # returns when the user chooses to continue the backup
-            exclude = self.interface.thresholdExceeded_(
-                (self, backup_size, large_entries))
-            backup_size -= sum(entry.size for entry in exclude)
+            # returns when the user decided on what to do
+            exclude = self.interface.thresholdExceeded_size_largeEntries_(
+                self, backup_size, large_entries)
+            if exclude is None:     # user skipped the backup
+                backup_size = 0
+            else:
+                backup_size -= sum(entry.size for entry in exclude)
         else:
             exclude = []
-        if backup_size == 0:
-            return False
-        self.interface.startBackup_((self, backup_size))
-        backup_dir = (self.destination / timestamp_from_log(last_log)
-                    if last_log else None)
-        success = self.backup_sync(backup_dir, exclude)
-        if backup_dir:
-            # move the logs from the last backup to the backup dir
-            last_logs = '/' + last_log.replace('sync.log', '*')
-            self.rclone('move', '--include', last_logs,
-                        self.destination, backup_dir)
-            self.record_backup_size(backup_dir)
-        # copy logs for this backup to the remote
-        local_logs = self.file_path('*', '*')
-        self.rclone('copy', '--include', local_logs.name,
-                    local_logs.parent, self.destination)
+        if backup_size != 0:
+            self.interface.startBackup_size_(self, backup_size)
+            backup_dir = (self.destination / timestamp_from_log(last_log)
+                        if last_log else None)
+            success = self.backup_sync(backup_dir, exclude)
+            if backup_dir:
+                # move the logs from the last backup to the backup dir
+                last_logs = '/' + last_log.replace('sync.log', '*')
+                self.rclone('move', '--include', last_logs,
+                            self.destination, backup_dir)
+                self.record_backup_size(backup_dir)
+            # copy logs for this backup to the remote
+            local_logs = self.file_path('*', '*')
+            self.rclone('copy', '--include', local_logs.name,
+                        local_logs.parent, self.destination)
+            backup_performed = True
         self.interface.idle_()
         self.cleanup()
-        return True
+        return backup_performed
 
     def sync_popen(self, *args, dry_run=False):
         snapshot_source = self.mount_point / self.source.relative_to('/')
@@ -311,7 +313,7 @@ class RCloneBackup:
                         continue
                     if size := self._get_item_size(msg):
                         transferred += size
-                        self.interface.updateProgress_(transferred)
+                        self.interface.updateProgress_transferred_(self, transferred)
                     elif msg['level'] == 'error':
                         print('ERROR:', msg['msg'])
         except CalledProcessError as cpe:
