@@ -6,6 +6,7 @@ import re
 from datetime import datetime, timedelta
 from itertools import chain
 from pathlib import Path
+from queue import Queue
 from subprocess import run, Popen, PIPE, CalledProcessError
 from tempfile import TemporaryDirectory
 
@@ -74,6 +75,7 @@ class RCloneBackup:
 
         self.interface = None
         self.tree = None
+        self.exclude_queue = Queue(maxsize=1)
         self.device, self.snapshot = self.get_last_snapshot()
         self.timestamp = RE_SNAPSHOT.match(self.snapshot).group(1)
         self._tempdir = None
@@ -222,9 +224,9 @@ class RCloneBackup:
                 for entry in large_entries:
                     size = format_size(entry.size, True)
                     print(f'{size}   {entry.path}', file=f)
-            # returns when the user decided on what to do
-            exclude = self.interface.thresholdExceeded_size_largeEntries_(
+            self.interface.thresholdExceeded_size_largeEntries_(
                 self, backup_size, large_entries)
+            exclude = self.exclude_queue.get()
             if exclude is None:     # user skipped the backup
                 backup_size = 0
             else:
@@ -331,6 +333,12 @@ class RCloneBackup:
             return self.tree.get(log_msg['object']).size
         elif self.dry_run and log_msg.get('skipped') == 'copy':
             return log_msg.get('size')
+
+    def continue_backup(self, excluded):
+        self.exclude_queue.put_nowait(excluded)
+        
+    def skip_backup(self):
+        self.exclude_queue.put_nowait(None)
 
     def record_backup_size(self, backupdir):
         size_cmd = self.rclone('size', '--json', backupdir, capture=True)

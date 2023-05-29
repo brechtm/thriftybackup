@@ -36,6 +36,7 @@ from thriftybackup.util import format_size
 
 
 class AppInterface(NSObject):
+    """Handles communication from RCloneBackup to MenuBarApp"""
 
     def __new__(cls, *args, **kwargs):
         # https://pyobjc.readthedocs.io/en/latest/examples/Cocoa/AppKit/PythonBrowser/index.html
@@ -43,7 +44,6 @@ class AppInterface(NSObject):
 
     def __init__(self, app):
         self.app = app
-        self._queue = Queue(maxsize=1)
 
     # process -> app
     
@@ -62,7 +62,6 @@ class AppInterface(NSObject):
     def thresholdExceeded_size_largeEntries_(self, backup, backup_size, large_entries):
         args = (backup, backup_size, large_entries)
         self.pyobjc_performSelectorOnMainThread_withObject_('_thresholdExceeded:', args)
-        return self._queue.get()
 
     def _thresholdExceeded_(self, args):
         self.app.threshold_exceeded(*args)
@@ -87,61 +86,70 @@ class AppInterface(NSObject):
             raise SystemExit(1)
         self.app.quit()
 
-    # app -> process
-        
-    def continueBackup_(self, excluded):
-        self._queue.put_nowait(excluded)
-
-    def skipBackup_(self, _=None):
-        self._queue.put_nowait(None)
-
-    def abortBackup(self):
-        # ALT: just kill rclone process from this thread? (call Popen.terminate())
-        self.pyobjc_performSelector_onThread_withObject_waitUntilDone_(
-            '_abortBackup:', self.process.thread, None, False) # probably only takes NSThread
-
-    def _abortBackup_(self, _):
-        self.process
-        
-    def cleanUp(self):
-        self.process.cleanup()
 
 
-def load_configuration(echo, dry_run):
-    return Configuration(CONFIG_PATH, echo=echo, dry_run=dry_run)
+CHECK_INTERVAL = 5 * 60     # 5 minutes
 
 
-CHECK_INTERVAL = 5 * 60
+class BackupDaemon:
+    """Schedules automatic backups and handles requests from the app"""
+    
+    def __init__(self, app, echo=False, dry_run=False) -> None:
+        self.app = app
+        self.echo = echo
+        self.dry_run = dry_run
+        self._backup_now = Queue(maxsize=1)
+        self._interface = AppInterface(app)
+        self._thread = Thread(target=self._main_loop)
+        self._backup = None     # running backup
 
+    def _load_configuration(self):
+        return Configuration(CONFIG_PATH, echo=self.echo, dry_run=self.dry_run)
 
-def main_loop(queue, interface, echo, dry_run):
-    while True:
-        try:
-            backup = queue.get(timeout=CHECK_INTERVAL)
-            backup.backup(interface, force=True)
-        except Empty:
-            config = load_configuration(echo=echo, dry_run=dry_run)
-            for backup in config.values():
-                if backup.backup(interface):
-                    break   # only continue to next backup if current one is skipped
+    def _main_loop(self):
+        while True:
+            try:
+                backup = self._backup_now.get(timeout=CHECK_INTERVAL)
+                if backup is None:  # app asks to quit
+                    break
+                backup.backup(self, self._interface, force=True)
+            except Empty:
+                for backup in self.configurations:
+                    backup = backup
+                    if backup.backup(self, self._interface):
+                        break   # only continue to next backup if current one is skipped
 
+    def start(self):
+        self._thread.start()
+
+    @property
+    def configurations(self):
+        config = self._load_configuration()
+        yield from config.values()
+
+    def backup_now(self, backup):
+        self._backup_now.put(backup)
+
+    def abort_backup(self):
+        pass    # TODO: call Backup method that calls Popen.terminate()?
+    
+    def shutdown(self):
+        self._backup_now.put(None)
+        self._thread.join()
+    
 
 class MenuBarApp(rumps.App):
     
     def __init__(self, echo=False, dry_run=False):
         super().__init__('rclone backup', icon='rclone.icns', template=True,
                          quit_button=None)
-        self.config = load_configuration(echo=echo, dry_run=dry_run)
         self.total_size = None
         self.large_entry_menu_items = []
         self.total_size_menu_item = None
         self.progress_menu_item = None
+        self.daemon = BackupDaemon(self, echo, dry_run)
+        self.daemon.start()
         self.idle()
-        self.queue = Queue(maxsize=1)
-        self.interface = AppInterface(self)
-        self.thread = Thread(target=main_loop,
-                             args=[self.queue, self.interface, echo, dry_run])
-        self.thread.start()
 
     def add_menuitem(self, title, callback=None, key=None, parent=None):
         menu_item = rumps.MenuItem(title, callback=callback, key=key)
@@ -155,8 +163,8 @@ class MenuBarApp(rumps.App):
     def idle(self):
         self.title = None
         self.menu.clear()
-        for backup_name, backup in self.config.items():
-            menu = self.add_menuitem(backup_name)
+        for backup in self.daemon.configurations:     # TODO: slow, run in thread?
+            menu = self.add_menuitem(backup.name)
             backup_now = partial(self.backup_now, backup=backup)
             self.add_menuitem('Backup now', backup_now, parent=menu)
             edit_exclude = partial(self.edit_exclude_file,
@@ -170,10 +178,10 @@ class MenuBarApp(rumps.App):
         self.menu.add(rumps.separator)
         self.add_menuitem('Edit configuration', self.edit_config_file, ',')
         self.add_menuitem('Install command-line tool', self.install_thrifty, 'c')
-        self.add_menuitem('Quit', rumps.quit_application, 'q')
+        self.add_menuitem('Quit', self.quit, 'q')
 
     def backup_now(self, _, backup):
-        self.queue.put(backup)
+        self.daemon.backup_now(backup)
 
     def prepare(self, backup):
         self.menu.clear()
@@ -195,8 +203,10 @@ class MenuBarApp(rumps.App):
                            f"Total backup size: {format_size(total_size)}")
         self.set_title(f"{backup.name}: {format_size(total_size)}",
                        color=(1, 0, 0, 1))
-        self.add_menuitem('Continue Backup', self.continue_backup, 'c')
-        self.add_menuitem('Skip Backup', self.skip_backup, 's')
+        continue_backup = partial(self.continue_backup, backup=backup)
+        self.add_menuitem('Continue Backup', continue_backup, 'c')
+        skip_backup = partial(self.skip_backup, backup=backup)
+        self.add_menuitem('Skip Backup', skip_backup, 's')
         edit_exclude_file = partial(self.edit_exclude_file,
                                     exclude_file=backup.exclude_file,
                                     large_files_file=backup.large_files_path)
@@ -249,14 +259,17 @@ class MenuBarApp(rumps.App):
         size = self.total_size - excluded_size
         self.total_size_menu_item.title = f'Backup size: {format_size(size)}'
 
-    def continue_backup(self, _):
+    def continue_backup(self, _, backup):
         exclude = []
         for menu_item, entry in self.large_entry_menu_items:
             if menu_item.state:
                 print(f'keep {entry.path} ({format_size(entry.size)})')
             else:
                 exclude.append(entry)
-        self.interface.continueBackup_(exclude)
+        backup.continue_backup(exclude)
+
+    def skip_backup(self, _, backup):
+        backup.skip_backup()
 
     def start_backup(self, backup, total_bytes):
         self.total_bytes = total_bytes
@@ -275,9 +288,6 @@ class MenuBarApp(rumps.App):
     # TODO: extra menu entries:
     # - backup everything
     # - continue but exclude ml dirs/files
-
-    def skip_backup(self, _):
-        self.interface.skipBackup_()
 
     def edit_config_file(self, _):
         run(['open', '-a', 'TextEdit', CONFIG_PATH])
@@ -302,11 +312,11 @@ class MenuBarApp(rumps.App):
         run(['osascript', '-e', script])
 
     def abort_backup(self, _):
-        self.interface.abortBackup()
-        self.quit()
+        self.daemon.abort_backup()
+        self.idle()
         
-    def quit(self):
-        self.interface.cleanUp()
+    def quit(self, _):
+        self.daemon.shutdown()
         rumps.quit_application()
 
 
