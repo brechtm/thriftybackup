@@ -35,59 +35,6 @@ from thriftybackup.util import format_size
 # change ~/Library to include-only
 
 
-class AppInterface(NSObject):
-    """Handles communication from RCloneBackup to MenuBarApp"""
-
-    def __new__(cls, *args, **kwargs):
-        # https://pyobjc.readthedocs.io/en/latest/examples/Cocoa/AppKit/PythonBrowser/index.html
-        return cls.alloc().init()
-
-    def __init__(self, app):
-        self.app = app
-
-    # process -> app
-    
-    def idle_(self, _=None):
-        self.pyobjc_performSelectorOnMainThread_withObject_('_idle:', None)
-    
-    def _idle_(self, _):
-        self.app.idle()
-        
-    def prepare_(self, backup):
-        self.pyobjc_performSelectorOnMainThread_withObject_('_prepare:', backup)
-
-    def _prepare_(self, backup):
-        self.app.prepare(backup)
-    
-    def thresholdExceeded_size_largeEntries_(self, backup, backup_size, large_entries):
-        args = (backup, backup_size, large_entries)
-        self.pyobjc_performSelectorOnMainThread_withObject_('_thresholdExceeded:', args)
-
-    def _thresholdExceeded_(self, args):
-        self.app.threshold_exceeded(*args)
-
-    def startBackup_size_(self, backup, backup_size):
-        self.pyobjc_performSelectorOnMainThread_withObject_('_startBackup:', (backup, backup_size))
-
-    def _startBackup_(self, args):
-        self.app.start_backup(*args)
-
-    def updateProgress_transferred_(self, backup, transferred_bytes):
-        self.pyobjc_performSelectorOnMainThread_withObject_('_updateProgress:', (backup, transferred_bytes))
-        
-    def _updateProgress_(self, args):
-        self.app.update_progress(*args)
-    
-    def quitApp_(self, success):
-        self.pyobjc_performSelectorOnMainThread_withObject_('_quitApp:', success)
-
-    def _quitApp_(self, success):
-        if not success:
-            raise SystemExit(1)
-        self.app.quit()
-
-
-
 CHECK_INTERVAL = 5 * 60     # 5 minutes
 
 
@@ -95,11 +42,10 @@ class BackupDaemon:
     """Schedules automatic backups and handles requests from the app"""
     
     def __init__(self, app, echo=False, dry_run=False) -> None:
-        self.app = app
         self.echo = echo
         self.dry_run = dry_run
+        self._proxy = AppProxy(app)
         self._backup_now = Queue(maxsize=1)
-        self._interface = AppInterface(app)
         self._thread = Thread(target=self._main_loop)
         self._backup = None     # running backup
 
@@ -112,11 +58,11 @@ class BackupDaemon:
                 backup = self._backup_now.get(timeout=CHECK_INTERVAL)
                 if backup is None:  # app asks to quit
                     break
-                backup.backup(self, self._interface, force=True)
+                backup.backup(self._proxy, force=True)
             except Empty:
                 for backup in self.configurations:
                     backup = backup
-                    if backup.backup(self, self._interface):
+                    if backup.backup(self._proxy):
                         break   # only continue to next backup if current one is skipped
 
     def start(self):
@@ -137,6 +83,12 @@ class BackupDaemon:
         self._backup_now.put(None)
         self._thread.join()
     
+
+def interface(func):
+    """Decorator exposing MenuBarApp functions to RCloneBackup instances"""
+    func.part_of_interface = True
+    return func
+
 
 class MenuBarApp(rumps.App):
     
@@ -160,6 +112,7 @@ class MenuBarApp(rumps.App):
         show_files = partial(self.show_files, ncdu_export_path=ncdu_export_path)
         self.add_menuitem('Show Files', show_files, 'f')
 
+    @interface
     def idle(self):
         self.title = None
         self.menu.clear()
@@ -183,6 +136,7 @@ class MenuBarApp(rumps.App):
     def backup_now(self, _, backup):
         self.daemon.backup_now(backup)
 
+    @interface
     def prepare(self, backup):
         self.menu.clear()
         self.add_menuitem(f'{backup.name}: determining backup size...')
@@ -196,6 +150,7 @@ class MenuBarApp(rumps.App):
             string = NSAttributedString.alloc().initWithString_attributes_(self.title, attributes)
             self._nsapp.nsstatusitem.setAttributedTitle_(string)
 
+    @interface
     def threshold_exceeded(self, backup, total_size, large_entries):
         self.menu.clear()
         self.total_size = total_size
@@ -271,6 +226,7 @@ class MenuBarApp(rumps.App):
     def skip_backup(self, _, backup):
         backup.skip_backup()
 
+    @interface
     def start_backup(self, backup, total_bytes):
         self.total_bytes = total_bytes
         self.menu.clear()
@@ -279,6 +235,7 @@ class MenuBarApp(rumps.App):
         self.add_menuitem('Abort Backup', self.abort_backup, 'a')
         self.set_title(format_size(total_bytes))
 
+    @interface
     def update_progress(self, backup, transferred):
         self.progress_menu_item.title = \
             (f'{backup.name}: {format_size(transferred)}'
@@ -332,6 +289,43 @@ tell app "Terminal"
 end tell
 """
 
+
+class AppInterface(NSObject):
+    def __new__(cls, *args, **kwargs):
+        # https://pyobjc.readthedocs.io/en/latest/examples/Cocoa/AppKit/PythonBrowser/index.html
+        return cls.alloc().init()
+
+    def __init__(self, app):
+        self.app = app
+
+    def callAppMethod_methodName_(self, methodName, args):
+        self.pyobjc_performSelectorOnMainThread_withObject_('_callAppMethod:', (methodName, *args))
+
+    def _callAppMethod_(self, methodName_args):
+        method_name, *args = methodName_args
+        return getattr(self.app, method_name)(*args)
+
+
+class AppProxyMeta(type):
+    def __new__(mcls, classname, bases, cls_dict):
+        def make_proxy(name):     # work around Python closure gotcha
+            def proxy_method(self, *args):
+                return self._interface.callAppMethod_methodName_(name, args)
+            return proxy_method
+
+        for name, func in MenuBarApp.__dict__.items():
+            if getattr(func, 'part_of_interface', False):
+                cls_dict[name] = make_proxy(name)
+        return super().__new__(mcls, classname, bases, cls_dict)       
+
+
+class AppProxy(metaclass=AppProxyMeta):
+    """Handles communication from RCloneBackup to MenuBarApp"""
+    
+    def __init__(self, app):
+        self.app = app
+        self._interface = AppInterface(app)
+        
 
 def app(echo=False, dry_run=False):
     if not CONFIG_PATH.exists():

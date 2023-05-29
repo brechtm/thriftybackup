@@ -73,7 +73,7 @@ class RCloneBackup:
         self.echo = echo
         self.dry_run = dry_run
 
-        self.interface = None
+        self._app = None
         self.tree = None
         self.exclude_queue = Queue(maxsize=1)
         self.device, self.snapshot = self.get_last_snapshot()
@@ -140,7 +140,7 @@ class RCloneBackup:
     def unmount_snapshot(self):
         run([UMOUNT, self.mount_point], check=True)        
 
-    def backup(self, interface, force=False):
+    def backup(self, app, force=False):
         self.logs_path.mkdir(parents=True, exist_ok=True)
         self.rclone('mkdir', self.destination_latest, dry_run=False)
         local_timestamp = snapshot_datetime(self.snapshot)
@@ -160,7 +160,7 @@ class RCloneBackup:
                 print(f"{self.name}: last backup is only {last_age} old (< {self.interval})")
                 return False
         self.mount_snapshot()
-        self.interface = interface
+        self._app = app
         return self.perform_backup(last_log)
 
     def rclone(self, *args, dry_run=None, capture=False) -> Popen or None:
@@ -215,7 +215,7 @@ class RCloneBackup:
         return last_log
 
     def perform_backup(self, last_log):
-        self.interface.prepare_(self)
+        self._app.prepare(self)
         self.tree, large_entries = self.backup_scout()
         backup_size = self.tree.size
         backup_performed = False
@@ -224,8 +224,7 @@ class RCloneBackup:
                 for entry in large_entries:
                     size = format_size(entry.size, True)
                     print(f'{size}   {entry.path}', file=f)
-            self.interface.thresholdExceeded_size_largeEntries_(
-                self, backup_size, large_entries)
+            self._app.threshold_exceeded(self, backup_size, large_entries)
             exclude = self.exclude_queue.get()
             if exclude is None:     # user skipped the backup
                 backup_size = 0
@@ -234,7 +233,7 @@ class RCloneBackup:
         else:
             exclude = []
         if backup_size != 0:
-            self.interface.startBackup_size_(self, backup_size)
+            self._app.start_backup(self, backup_size)
             backup_dir = (self.destination / timestamp_from_log(last_log)
                         if last_log else None)
             success = self.backup_sync(backup_dir, exclude)
@@ -249,7 +248,7 @@ class RCloneBackup:
             self.rclone('copy', '--include', local_logs.name,
                         local_logs.parent, self.destination)
             backup_performed = True
-        self.interface.idle_()
+        self._app.idle()
         self.cleanup()
         return backup_performed
 
@@ -315,7 +314,7 @@ class RCloneBackup:
                         continue
                     if size := self._get_item_size(msg):
                         transferred += size
-                        self.interface.updateProgress_transferred_(self, transferred)
+                        self._app.update_progress(self, transferred)
                     elif msg['level'] == 'error':
                         print('ERROR:', msg['msg'])
         except CalledProcessError as cpe:
