@@ -142,14 +142,14 @@ class RCloneBackup:
 
     def backup(self, app, force=False):
         self.logs_path.mkdir(parents=True, exist_ok=True)
-        self.rclone('mkdir', self.destination_latest, dry_run=False)
-        local_timestamp = snapshot_datetime(self.snapshot)
         try:
+            self.rclone('mkdir', self.destination_latest, dry_run=False)
             last_log = self.get_last_log()
         except CalledProcessError as error:
             if error.returncode == 1:   # connection error
                 return False
             raise
+        local_timestamp = snapshot_datetime(self.snapshot)
         if last_log:
             log_timestamp = timestamp_from_log(last_log)
             last_age = local_timestamp - datetime.fromisoformat(log_timestamp)
