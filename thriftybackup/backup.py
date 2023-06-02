@@ -281,7 +281,9 @@ class RCloneBackup:
                         continue
                     if msg.get('skipped') == 'copy':
                         rel_path = Path(msg['object'])
-                        tree.add_file(rel_path, msg['size'])
+                        if link := rel_path.name.endswith('.rclonelink'):
+                            rel_path = rel_path.with_suffix('')
+                        tree.add_file(rel_path, msg['size'], link=link)
         except CalledProcessError as cpe:
             # TODO: interpret rclone_sync.returncode
             raise

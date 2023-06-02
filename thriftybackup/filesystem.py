@@ -24,6 +24,11 @@ class File(Entry):
         return dict(name=name, asize=self.size)
 
 
+class Link(File):
+    def to_ncdu(self, name):
+        return dict(name=name, notreg=True)
+
+
 class Directory(Entry):
     def __init__(self, path):
         super().__init__(path)
@@ -36,19 +41,20 @@ class Directory(Entry):
         name, *rest = parts
         return self.entries[name]._get(rest) if rest else self.entries[name]
 
-    def add_file(self, path, size):
+    def add_file(self, path, size, link=False):
         parts = path.parts
-        self._add_file(path, parts, size)
+        self._add_file(path, parts, size, link)
 
-    def _add_file(self, path, path_parts, size):
+    def _add_file(self, path, path_parts, size, link=False):
         name, *parts = path_parts
         dir_path = '/'.join(path.parts[:-len(parts)]) + '/'
         if parts:
             dir = self.entries.setdefault(name, Directory(dir_path))
-            dir._add_file(path, parts, size)
+            dir._add_file(path, parts, size, link)
         else:
             assert name not in self.entries
-            self.entries[name] = File(path, size)
+            self.entries[name] = (Link if link else File)(path, size)
+            
 
     def calculate_size(self):
         self.size = sum((e.calculate_size() for e in self.entries.values()),
