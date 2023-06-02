@@ -99,7 +99,7 @@ class RCloneBackup:
 
     @property
     def ncdu_export_path(self):
-        return self.file_path('ncdu', 'json')
+        return self.file_path('scout', 'json')
 
     @property
     def large_files_path(self):
