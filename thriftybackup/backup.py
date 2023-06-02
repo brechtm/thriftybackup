@@ -257,13 +257,15 @@ class RCloneBackup:
         extra = list(chain(['--bwlimit', self.bwlimit] if self.bwlimit else [],
                            ['--dry-run'] if dry_run else [],
                            ['--progress'] if self.echo else []))
-        cmd = [self.rclone_path, 'sync', '--use-json-log', '--fast-list',
-               '--links', '--track-renames', '--track-renames-strategy',
-               'modtime,leaf', *args, *extra, snapshot_source,
-               self.destination_latest]
+        cmd = [self.rclone_path, 'sync', '--use-json-log', '--log-level', 'INFO',
+               '--fast-list', '--links', '--track-renames',
+               '--track-renames-strategy', 'modtime,leaf', *args, *extra,
+               snapshot_source, self.destination_latest]
         if self.echo:
             print(' '.join(map(str, cmd)))
         return Popen(cmd, stderr=PIPE)
+
+    RE_RENAMED_FROM = re.compile('Renamed from "(.*)"')
 
     def backup_scout(self):
         tree = Directory('')
@@ -279,11 +281,20 @@ class RCloneBackup:
                     if not (msg := try_json(line)):
                         print(line)
                         continue
-                    if msg.get('skipped') == 'copy':
+                    if skipped := msg.get('skipped'):
                         rel_path = Path(msg['object'])
+                        if skipped == 'remove directory':
+                            break   # no need to handle explicitly?
                         if link := rel_path.name.endswith('.rclonelink'):
                             rel_path = rel_path.with_suffix('')
-                        tree.add_file(rel_path, msg['size'], link=link)
+                        tree.add_file(rel_path, msg['size'], link=link,
+                                      action=skipped)
+                    elif m := self.RE_RENAMED_FROM.fullmatch(msg['msg']):
+                        rel_path = Path(msg['object'])
+                        source = m.group(1)
+                        tree.add_file(rel_path, 0, action='move-dest',
+                                      source=source)
+                        tree.get(source).metadata['destination'] = rel_path
         except CalledProcessError as cpe:
             # TODO: interpret rclone_sync.returncode
             raise
@@ -303,8 +314,7 @@ class RCloneBackup:
         files_txt = self.file_path('files', 'txt')
         backupdir_args = ['--backup-dir', backup_dir] if backup_dir else []
         try:
-            sync = self.sync_popen('--log-level', 'INFO',
-                                   '--files-from-raw', files_txt,
+            sync = self.sync_popen('--files-from-raw', files_txt,
                                    *backupdir_args, dry_run=self.dry_run)
             transferred = 0
             sync_log = self.file_path('sync', 'log')

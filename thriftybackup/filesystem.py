@@ -1,9 +1,11 @@
 
 
 class Entry:
-    def __init__(self, path, size=None):
+    def __init__(self, path, size=None, action='copy', **metadata):
         self.path = path
         self.size = size
+        self.action = action
+        self.metadata = metadata
 
     def calculate_size(self):
         raise NotImplementedError
@@ -14,14 +16,19 @@ class Entry:
         
 class File(Entry):
     def calculate_size(self):
-        return self.size
+        return self.size if self.action == 'copy' else 0
 
     def iter_files(self, exclude):
         if self not in exclude:
             yield self
 
     def to_ncdu(self, name):
-        return dict(name=name, asize=self.size)
+        extra = dict(excluded=self.action) if self.action != 'copy' else {}
+        match self.action:
+            case 'delete': name += ' [D]'
+            case 'move': name += f' [M > {self.metadata["destination"]}]'
+            case 'move-dest': name += f' [M < {self.metadata["source"]}]'
+        return dict(name=name, asize=self.size, **extra)
 
 
 class Link(File):
@@ -41,19 +48,22 @@ class Directory(Entry):
         name, *rest = parts
         return self.entries[name]._get(rest) if rest else self.entries[name]
 
-    def add_file(self, path, size, link=False):
+    def add_file(self, path, size, link=False, action='copy', **metadata):
         parts = path.parts
-        self._add_file(path, parts, size, link)
+        self._add_file(path, parts, size, link=link, action=action, **metadata)
 
-    def _add_file(self, path, path_parts, size, link=False):
+    def _add_file(self, path, path_parts, size, link=False, action=False,
+                  **metadata):
         name, *parts = path_parts
         dir_path = '/'.join(path.parts[:-len(parts)]) + '/'
         if parts:
             dir = self.entries.setdefault(name, Directory(dir_path))
-            dir._add_file(path, parts, size, link)
+            dir._add_file(path, parts, size, link=link, action=action,
+                          **metadata)
         else:
             assert name not in self.entries
-            self.entries[name] = (Link if link else File)(path, size)
+            self.entries[name] = (Link if link else File)(path, size, action,
+                                                          **metadata)
             
 
     def calculate_size(self):
@@ -72,7 +82,7 @@ class Directory(Entry):
 
 
 def find_large_entries(entry, threshold):
-    if entry.size < threshold:
+    if entry.action != 'copy' or entry.size < threshold:
         return
     try:
         entries = entry.entries
