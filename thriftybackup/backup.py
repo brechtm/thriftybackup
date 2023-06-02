@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from itertools import chain
 from pathlib import Path
 from queue import Queue
-from subprocess import run, Popen, PIPE, CalledProcessError
+from subprocess import CompletedProcess, run, Popen, PIPE, CalledProcessError
 from tempfile import TemporaryDirectory
 
 from . import CONFIG_DIR, CACHE_DIR
@@ -163,8 +163,8 @@ class RCloneBackup:
         self._app = app
         return self.perform_backup(last_log)
 
-    def rclone(self, *args, dry_run=None, capture=False) -> Popen or None:
-        """Run rclone with the given arguments
+    def rclone(self, *args, dry_run=None, capture=False) -> CompletedProcess or None:
+        """Run short-running rclone command with the given arguments
         
         Args:
           args: command line arguments passed to rclone
@@ -172,7 +172,7 @@ class RCloneBackup:
           capture: capture the output (in stdout attribute of return value)
         
         Returns:
-          rclone Popen object
+          rclone CompletedProcess object
         """
         dry_run = self.dry_run if dry_run is None else dry_run
         cmd = [self.rclone_path, *args]
