@@ -7,11 +7,12 @@ from datetime import datetime, timedelta
 from itertools import chain
 from pathlib import Path
 from queue import Queue
+from os.path import splitext
 from subprocess import CompletedProcess, run, Popen, PIPE, CalledProcessError
 from tempfile import TemporaryDirectory
 
 from . import CONFIG_DIR, CACHE_DIR
-from .filesystem import Directory, find_large_entries
+from .filesystem import Directory, Link, find_large_entries
 from .util import format_size
 
 
@@ -313,6 +314,8 @@ class RCloneBackup:
         with files_txt.open('w') as files:
             for file in self.tree.iter_files(exclude=exclude):
                 print(file.path, file=files)
+                if isinstance(file, Link):
+                    print(f'{file.path}.rclonelink', file=files)
         files_txt = self.file_path('files', 'txt')
         backupdir_args = ['--backup-dir', backup_dir] if backup_dir else []
         try:
@@ -343,7 +346,10 @@ class RCloneBackup:
 
     def _get_item_size(self, log_msg):
         if log_msg['msg'].startswith('Copied'):
-            return self.tree.get(log_msg['object']).size
+            file_path = log_msg['object']
+            if file_path.endswith('.rclonelink'):
+                file_path, _ = splitext(file_path)
+            return self.tree.get(file_path).size
         elif self.dry_run and log_msg.get('skipped') == 'copy':
             return log_msg.get('size')
 
