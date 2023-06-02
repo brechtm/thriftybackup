@@ -29,21 +29,27 @@ class Configuration(dict):
                          f" '{attribute}' could not be parsed")
 
     def _parse_keep(self, attribute, default):
-        value = self.toml.get('keep_all', default)
+        value = self.toml.get(attribute, default)
         keep_match = RE_KEEP.fullmatch(value.strip())
         try:
             return int(keep_match.group('days'))
         except AttributeError:
             self._syntax_error(attribute)
 
-    def _create_backup(self, name, cfg):
-        src, dest = cfg['source'], cfg['destination']
-        interval_match = RE_INTERVAL.fullmatch(cfg['interval'].strip())
+    def _parse_interval(self, name, config):
         try:
-            interval = timedelta(**{key: int(value) for key, value in
-                                    interval_match.groupdict(0).items()})
+            interval_match = RE_INTERVAL.fullmatch(config['interval'].strip())
+        except KeyError:
+            return None
+        try:
+            return timedelta(**{key: int(value) for key, value in
+                                interval_match.groupdict(0).items()})
         except AttributeError:
             self._syntax_error('interval', section=name)
+
+    def _create_backup(self, name, cfg):
+        src, dest = cfg['source'], cfg['destination']
+        interval = self._parse_interval(name, cfg)
         threshold = cfg.get('threshold')
         if threshold:
             try:

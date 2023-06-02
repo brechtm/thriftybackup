@@ -141,6 +141,8 @@ class RCloneBackup:
         run([UMOUNT, self.mount_point], check=True)        
 
     def backup(self, app, force=False):
+        if not (self.interval or force):
+            return False
         self.logs_path.mkdir(parents=True, exist_ok=True)
         try:
             self.rclone('mkdir', self.destination_latest, dry_run=False)
