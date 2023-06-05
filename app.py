@@ -151,6 +151,12 @@ class MenuBarApp(rumps.App):
             self._nsapp.nsstatusitem.setAttributedTitle_(string)
 
     @interface
+    def last_snapshot_already_backed_up(self, backup, snapshot_timestamp):
+        rumps.notification(f"{backup.name}: Skipping backup", None,
+                           f"The last local snapshot ({snapshot_timestamp}) was"
+                           " already backed up.", ignoreDnD=True)
+
+    @interface
     def threshold_exceeded(self, backup, total_size, large_entries):
         self.menu.clear()
         self.total_size = total_size

@@ -158,6 +158,8 @@ class RCloneBackup:
             last_age = local_timestamp - datetime.fromisoformat(log_timestamp)
             if last_age == timedelta(0):
                 print(f"{self.name}: the last local snapshot was already backed up")
+                if force:
+                    app.last_snapshot_already_backed_up(self, local_timestamp)
                 return False
             elif not force and last_age < self.interval:
                 print(f"{self.name}: last backup is only {last_age} old (< {self.interval})")
