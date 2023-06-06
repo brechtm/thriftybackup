@@ -166,7 +166,10 @@ class RCloneBackup:
                 return False
         self.mount_snapshot()
         self._app = app
-        return self.perform_backup(last_log)
+        try:
+            return self.perform_backup(last_log)
+        finally:
+            self.cleanup()
 
     def rclone(self, *args, dry_run=None, capture=False) -> CompletedProcess or None:
         """Run short-running rclone command with the given arguments
@@ -254,7 +257,6 @@ class RCloneBackup:
                         local_logs.parent, self.destination)
             backup_performed = True
         self._app.idle()
-        self.cleanup()
         return backup_performed
 
     def sync_popen(self, *args, dry_run=False):
