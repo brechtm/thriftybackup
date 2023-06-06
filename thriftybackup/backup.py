@@ -135,7 +135,7 @@ class RCloneBackup:
         self._tempdir = TemporaryDirectory()
         self.mount_point = Path(self._tempdir.name)
         print(f'Mounting {self.snapshot} at {self.mount_point}')
-        run([MOUNT_APFS, '-s', self.snapshot,
+        run([MOUNT_APFS, '-s', self.snapshot, '-o', 'nobrowse',
              f'/dev/{self.device}', self.mount_point], check=True)
         
     def unmount_snapshot(self):
