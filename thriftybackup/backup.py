@@ -289,19 +289,14 @@ class RCloneBackup:
                         print(line)
                         continue
                     if skipped := msg.get('skipped'):
-                        rel_path = Path(msg['object'])
                         if skipped == 'remove directory':
                             break   # no need to handle explicitly?
-                        if link := rel_path.name.endswith('.rclonelink'):
-                            rel_path = rel_path.with_suffix('')
-                        tree.add_file(rel_path, msg['size'], link=link,
-                                      action=skipped)
+                        tree.add_file(msg['object'], msg['size'], action=skipped)
                     elif m := self.RE_RENAMED_FROM.fullmatch(msg['msg']):
-                        rel_path = Path(msg['object'])
                         source = m.group(1)
-                        tree.add_file(rel_path, 0, action='move-dest',
+                        tree.add_file(msg['object'], 0, action='move-dest',
                                       source=source)
-                        tree.get(source).metadata['destination'] = rel_path
+                        tree.get(source).metadata['destination'] = msg['object']
         except CalledProcessError as cpe:
             # TODO: interpret rclone_sync.returncode
             raise
@@ -318,9 +313,8 @@ class RCloneBackup:
         with files_txt.open('w') as files:
             for file in self.tree.iter_files(exclude=exclude):
                 print(file.path, file=files)
-                if isinstance(file, Link):
-                    print(f'{file.path}.rclonelink', file=files)
-        files_txt = self.file_path('files', 'txt')
+                if file.path.suffix == '.rclonelink':   # rclone issue #6855
+                    print(file.path.with_suffix(''), file=files)
         backupdir_args = ['--backup-dir', backup_dir] if backup_dir else []
         try:
             sync = self.sync_popen('--files-from-raw', files_txt,

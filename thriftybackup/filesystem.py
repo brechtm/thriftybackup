@@ -1,5 +1,8 @@
 
 
+from pathlib import Path
+
+
 class Entry:
     def __init__(self, path, size=None, action='copy', **metadata):
         self.path = path
@@ -48,9 +51,11 @@ class Directory(Entry):
         name, *rest = parts
         return self.entries[name]._get(rest) if rest else self.entries[name]
 
-    def add_file(self, path, size, link=False, action='copy', **metadata):
-        parts = path.parts
-        self._add_file(path, parts, size, link=link, action=action, **metadata)
+    def add_file(self, path, size, action='copy', **metadata):
+        path = Path(path)
+        link = path.name.endswith('.rclonelink')
+        return self._add_file(path, path.parts, size, link=link, action=action,
+                              **metadata)
 
     def _add_file(self, path, path_parts, size, link=False, action=False,
                   **metadata):
@@ -61,10 +66,10 @@ class Directory(Entry):
             dir._add_file(path, parts, size, link=link, action=action,
                           **metadata)
         else:
-            assert name not in self.entries
-            self.entries[name] = (Link if link else File)(path, size, action,
-                                                          **metadata)
-            
+            if name in self.entries:
+                raise RuntimeError(f"{path} has already been added")
+            entry = (Link if link else File)(path, size, action, **metadata)
+            self.entries[name] = entry
 
     def calculate_size(self):
         self.size = sum((e.calculate_size() for e in self.entries.values()),
