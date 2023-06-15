@@ -41,8 +41,9 @@ CHECK_INTERVAL = 5 * 60     # 5 minutes
 class BackupDaemon:
     """Schedules automatic backups and handles requests from the app"""
     
-    def __init__(self, app, echo=False, dry_run=False) -> None:
+    def __init__(self, app, echo=False, progress=False, dry_run=False) -> None:
         self.echo = echo
+        self.progess = progress
         self.dry_run = dry_run
         self._proxy = AppProxy(app)
         self._backup_now = Queue(maxsize=1)
@@ -50,7 +51,8 @@ class BackupDaemon:
         self._backup = None     # running backup
 
     def _load_configuration(self):
-        return Configuration(CONFIG_PATH, echo=self.echo, dry_run=self.dry_run)
+        return Configuration(CONFIG_PATH, echo=self.echo, progress=self.progess,
+                             dry_run=self.dry_run)
 
     def _main_loop(self):
         while True:
@@ -92,14 +94,14 @@ def interface(func):
 
 class MenuBarApp(rumps.App):
     
-    def __init__(self, echo=False, dry_run=False):
+    def __init__(self, echo=False, progress=False, dry_run=False):
         super().__init__('rclone backup', icon='rclone.icns', template=True,
                          quit_button=None)
         self.total_size = None
         self.large_entry_menu_items = []
         self.total_size_menu_item = None
         self.progress_menu_item = None
-        self.daemon = BackupDaemon(self, echo, dry_run)
+        self.daemon = BackupDaemon(self, echo, progress, dry_run)
         self.daemon.start()
         self.idle()
 
@@ -333,7 +335,7 @@ class AppProxy(metaclass=AppProxyMeta):
         self._interface = AppInterface(app)
         
 
-def app(echo=False, dry_run=False):
+def app(echo=False, progress=False, dry_run=False):
     if not CONFIG_PATH.exists():
         print(f"Creating configuration file at {CONFIG_PATH}")
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -342,9 +344,9 @@ def app(echo=False, dry_run=False):
                     f"Created a sample configuration file at {CONFIG_PATH}."
                     " Now, please select 'Edit configuration file' from the"
                     " menu and add one or more backup configurations.")
-    app = MenuBarApp(echo, dry_run)
+    app = MenuBarApp(echo, progress, dry_run)
     app.run()
 
 
 if __name__ == "__main__":
-    app()
+    app(echo=True, progress=False, dry_run=False)

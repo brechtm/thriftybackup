@@ -9,9 +9,10 @@ from .util import EXPONENTS
 
 
 class Configuration(dict):
-    def __init__(self, config_path, echo, dry_run) -> None:
+    def __init__(self, config_path, echo, progress, dry_run) -> None:
         self.config_path = config_path
         self.echo = echo
+        self.progress = progress
         self.dry_run = dry_run
         with config_path.open('rb') as f:
             self.toml = tomllib.load(f)
@@ -62,7 +63,8 @@ class Configuration(dict):
                 self._syntax_error('threshold', section=name)
         return RCloneBackup(name, src, dest, interval, threshold,
                             bwlimit=self.bwlimit, rclone=self.rclone,
-                            echo=self.echo, dry_run=self.dry_run)
+                            echo=self.echo, progress=self.progress,
+                            dry_run=self.dry_run)
 
 
 RE_KEEP = re.compile(r'(?P<days>\d+)\s*(d(ays?)?)?', re.IGNORECASE)

@@ -63,7 +63,8 @@ UMOUNT = '/sbin/umount'
 class RCloneBackup:
 
     def __init__(self, name, source, destination, interval, threshold,
-                 bwlimit=None, rclone='rclone', echo=False, dry_run=False):
+                 bwlimit=None, rclone='rclone', echo=False, progress=False,
+                 dry_run=False):
         self.name = name
         self.source = Path(source)
         self.destination = Path(destination)
@@ -72,6 +73,7 @@ class RCloneBackup:
         self.bwlimit = bwlimit
         self.rclone_path = rclone
         self.echo = echo
+        self.progress = progress
         self.dry_run = dry_run
 
         self._app = None
@@ -263,7 +265,7 @@ class RCloneBackup:
         snapshot_source = self.mount_point / self.source.relative_to('/')
         extra = list(chain(['--bwlimit', self.bwlimit] if self.bwlimit else [],
                            ['--dry-run'] if dry_run else [],
-                           ['--progress'] if self.echo else []))
+                           ['--progress'] if self.progress else []))
         cmd = [self.rclone_path, 'sync', '--use-json-log', '--log-level', 'INFO',
                '--fast-list', '--links', '--track-renames',
                '--track-renames-strategy', 'modtime,leaf', *args, *extra,
