@@ -202,7 +202,7 @@ class MenuBarApp(rumps.App):
 
     def add_large_menu_item(self, entry, index):
         menu_item = rumps.MenuItem(
-            f'{format_size(entry.size, True)}  {entry.path}',
+            f'{format_size(entry.transfer_size, True)}  {entry.path}',
             key=str(index) if index < 10 else None,
             callback=lambda menu_item:
                 self.large_entry_menu_item_clicked(menu_item, str(entry.path))
@@ -216,7 +216,7 @@ class MenuBarApp(rumps.App):
         self.update_backup_size()
 
     def update_backup_size(self):
-        excluded_size = sum(entry.size
+        excluded_size = sum(entry.transfer_size
                             for menu_item, entry in self.large_entry_menu_items
                             if not menu_item.state)
         size = self.total_size - excluded_size
@@ -226,7 +226,7 @@ class MenuBarApp(rumps.App):
         exclude = []
         for menu_item, entry in self.large_entry_menu_items:
             if menu_item.state:
-                print(f'keep {entry.path} ({format_size(entry.size)})')
+                print(f'keep {entry.path} ({format_size(entry.transfer_size)})')
             else:
                 exclude.append(entry)
         backup.continue_backup(exclude)

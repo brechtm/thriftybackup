@@ -227,19 +227,19 @@ class RCloneBackup:
     def perform_backup(self, last_log):
         self._app.prepare(self)
         self.tree, large_entries = self.backup_scout()
-        backup_size = self.tree.size
+        backup_size = self.tree.transfer_size
         backup_performed = False
         if large_entries:
             with self.large_files_path.open('w') as f:
                 for entry in large_entries:
-                    size = format_size(entry.size, True)
+                    size = format_size(entry.transfer_size, True)
                     print(f'{size}   {entry.path}', file=f)
             self._app.threshold_exceeded(self, backup_size, large_entries)
             exclude = self.exclude_queue.get()
             if exclude is None:     # user skipped the backup
                 backup_size = 0
             else:
-                backup_size -= sum(entry.size for entry in exclude)
+                backup_size -= sum(entry.transfer_size for entry in exclude)
         else:
             exclude = []
         if backup_size != 0:
@@ -302,11 +302,10 @@ class RCloneBackup:
         except CalledProcessError as cpe:
             # TODO: interpret rclone_sync.returncode
             raise
-        tree.calculate_size()
         self.tree = tree
         write_ncdu_export(self.source, tree, self.ncdu_export_path)
         return tree, sorted(tree.large_entries(self.threshold),
-                            key=lambda item: item.size, reverse=True)
+                            key=lambda item: item.transfer_size, reverse=True)
 
         # TODO: caffeinate
         # FIXME: abort subprocesses on App quit

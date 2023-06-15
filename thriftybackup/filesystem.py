@@ -1,5 +1,6 @@
 
 
+from functools import cached_property
 from itertools import chain
 from pathlib import Path
 
@@ -11,7 +12,8 @@ class Entry:
         self.action = action
         self.metadata = metadata
 
-    def calculate_size(self):
+    @property
+    def transfer_size(self):
         raise NotImplementedError
 
     def large_entries(self, threshold):
@@ -23,7 +25,8 @@ class Entry:
         
         
 class File(Entry):
-    def calculate_size(self):
+    @property
+    def transfer_size(self):
         return self.size if self.action == 'copy' else 0
 
     def iter_files(self, exclude):
@@ -76,10 +79,9 @@ class Directory(Entry):
             entry = (Link if link else File)(path, size, action, **metadata)
             self.entries[name] = entry
 
-    def calculate_size(self):
-        self.size = sum((e.calculate_size() for e in self.entries.values()),
-                        start=0)
-        return self.size
+    @cached_property
+    def transfer_size(self):
+        return sum((e.transfer_size for e in self.entries.values()), start=0)
 
     def large_entries(self, threshold):
         large_children = chain(*(entry.large_entries(threshold)
