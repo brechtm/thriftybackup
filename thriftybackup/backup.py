@@ -12,7 +12,7 @@ from subprocess import CompletedProcess, run, Popen, PIPE, CalledProcessError
 from tempfile import TemporaryDirectory
 
 from . import CONFIG_DIR, CACHE_DIR
-from .filesystem import Directory, Link, find_large_entries
+from .filesystem import Directory, Link
 from .util import format_size
 
 
@@ -303,7 +303,7 @@ class RCloneBackup:
         tree.calculate_size()
         self.tree = tree
         write_ncdu_export(self.source, tree, self.ncdu_export_path)
-        return tree, sorted(find_large_entries(tree, self.threshold),
+        return tree, sorted(tree.large_entries(self.threshold),
                             key=lambda item: item.size, reverse=True)
 
         # TODO: caffeinate

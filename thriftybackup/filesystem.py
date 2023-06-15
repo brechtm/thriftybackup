@@ -1,5 +1,6 @@
 
 
+from itertools import chain
 from pathlib import Path
 
 
@@ -12,6 +13,10 @@ class Entry:
 
     def calculate_size(self):
         raise NotImplementedError
+
+    def large_entries(self, threshold):
+        if self.action == 'copy' and self.size > threshold:
+            yield self
 
     def to_ncdu(self, name):
         raise NotImplementedError
@@ -76,6 +81,15 @@ class Directory(Entry):
                         start=0)
         return self.size
 
+    def large_entries(self, threshold):
+        large_children = chain(*(entry.large_entries(threshold)
+                                 for entry in self.entries.values()))
+        try:
+            yield next(large_children)
+            yield from large_children
+        except StopIteration:   # large_children is empty
+            yield from super().large_entries(threshold)
+
     def iter_files(self, exclude):
         if self not in exclude:
             for entry in self.entries.values():
@@ -84,20 +98,3 @@ class Directory(Entry):
     def to_ncdu(self, name):
         return [dict(name=name),
                 *(entry.to_ncdu(name) for name, entry in self.entries.items())]
-
-
-def find_large_entries(entry, threshold):
-    if entry.action != 'copy' or entry.size < threshold:
-        return
-    try:
-        entries = entry.entries
-    except AttributeError:  # entry is a file
-        yield entry
-    else:                   # entry is a directory
-        yield_this_dir = True
-        for name, child in entries.items():
-            for entry in find_large_entries(child, threshold):
-                yield entry
-                yield_this_dir = False
-        if yield_this_dir:
-            yield entry
