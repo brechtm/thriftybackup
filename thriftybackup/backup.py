@@ -226,9 +226,12 @@ class RCloneBackup:
 
     def perform_backup(self, last_log):
         self._app.prepare(self)
-        self.tree, large_entries = self.backup_scout()
+        self.tree = self.backup_scout()
+        write_ncdu_export(self.source, self.tree, self.ncdu_export_path)
         backup_size = self.tree.transfer_size
         backup_performed = False
+        large_entries = sorted(self.tree.large_entries(self.threshold),
+                               key=lambda e: e.transfer_size, reverse=True)
         if large_entries:
             with self.large_files_path.open('w') as f:
                 for entry in large_entries:
@@ -274,10 +277,7 @@ class RCloneBackup:
             print(' '.join(map(str, cmd)))
         return Popen(cmd, stderr=PIPE)
 
-    RE_RENAMED_FROM = re.compile('Renamed from "(.*)"')
-
     def backup_scout(self):
-        tree = Directory('')
         args = ['--retries', '1']
         if self.exclude_file.exists():
             args.extend(['--exclude-from', self.exclude_file])
@@ -285,27 +285,11 @@ class RCloneBackup:
             rclone_sync = self.sync_popen(*args, dry_run=True)
             scout_log = self.file_path('scout', 'log')
             with scout_log.open('wb') as log:
-                for line in rclone_sync.stderr:
-                    log.write(line)
-                    if not (msg := try_json(line)):
-                        print(line)
-                        continue
-                    if skipped := msg.get('skipped'):
-                        if skipped == 'remove directory':
-                            break   # no need to handle explicitly?
-                        tree.add_file(msg['object'], msg['size'], action=skipped)
-                    elif m := self.RE_RENAMED_FROM.fullmatch(msg['msg']):
-                        source = m.group(1)
-                        tree.add_file(msg['object'], 0, action='move-dest',
-                                      source=source)
-                        tree.get(source).metadata['destination'] = msg['object']
+                tree = json_log_to_tree(rclone_sync.stderr, log)
         except CalledProcessError as cpe:
             # TODO: interpret rclone_sync.returncode
             raise
-        self.tree = tree
-        write_ncdu_export(self.source, tree, self.ncdu_export_path)
-        return tree, sorted(tree.large_entries(self.threshold),
-                            key=lambda item: item.transfer_size, reverse=True)
+        return tree
 
         # TODO: caffeinate
         # FIXME: abort subprocesses on App quit
@@ -375,6 +359,28 @@ class RCloneBackup:
             print(f"{timestamp:18} {format_size(size, True):>12}")
             total += size
         print(f"{'Total:':18} {format_size(total, True):>12}")
+
+
+RE_RENAMED_FROM = re.compile('Renamed from "(.*)"')
+
+
+def json_log_to_tree(lines, log_file=None):
+    tree = Directory('')
+    for line in lines:
+        if log_file:
+            log_file.write(line)
+        if not (msg := try_json(line)):
+            print(line)
+            continue
+        if skipped := msg.get('skipped'):
+            if skipped == 'remove directory':
+                break   # no need to handle explicitly?
+            tree.add_file(msg['object'], msg['size'], action=skipped)
+        elif m := RE_RENAMED_FROM.fullmatch(msg['msg']):
+            source = m.group(1)
+            tree.add_file(msg['object'], 0, action='move-dest', source=source)
+            tree.get(source).metadata['destination'] = msg['object']
+    return tree
 
 
 def try_json(line):
