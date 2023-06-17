@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 class Entry:
-    def __init__(self, path, size=None, action='copy', **metadata):
+    def __init__(self, path, size=None, action=None, **metadata):
         self.path = path
         self.size = size
         self.action = action
@@ -17,7 +17,7 @@ class Entry:
         raise NotImplementedError
 
     def large_entries(self, threshold):
-        if self.action == 'copy' and self.size > threshold:
+        if self.transfer_size > threshold:
             yield self
 
     def to_ncdu(self, name):
@@ -59,25 +59,26 @@ class Directory(Entry):
         name, *rest = parts
         return self.entries[name]._get(rest) if rest else self.entries[name]
 
-    def add_file(self, path, size, action='copy', **metadata):
+    def add_file(self, path, size, action, **metadata):
         path = Path(path)
         link = path.name.endswith('.rclonelink')
-        return self._add_file(path, path.parts, size, link=link, action=action,
+        return self._add_file(path, path.parts, size, action, link=link,
                               **metadata)
 
-    def _add_file(self, path, path_parts, size, link=False, action=False,
-                  **metadata):
+    def _add_file(self, path, path_parts, size, action, link=False, **metadata):
         name, *parts = path_parts
-        dir_path = '/'.join(path.parts[:-len(parts)]) + '/'
+        dir_path = Path(*path.parts[:-len(parts)])
         if parts:
             dir = self.entries.setdefault(name, Directory(dir_path))
-            dir._add_file(path, parts, size, link=link, action=action,
-                          **metadata)
+            dir._add_file(path, parts, size, action, link=link, **metadata)
         else:
-            if name in self.entries:
-                raise RuntimeError(f"{path} has already been added")
-            entry = (Link if link else File)(path, size, action, **metadata)
-            self.entries[name] = entry
+            if existing_entry := self.entries.get(name):
+                if existing_entry.action:
+                    raise RuntimeError(f"{path} has already been added")
+                existing_entry.action = action
+            else:
+                entry = (Link if link else File)(path, size, action, **metadata)
+                self.entries[name] = entry
 
     @cached_property
     def transfer_size(self):
@@ -94,6 +95,8 @@ class Directory(Entry):
 
     def iter_files(self, exclude):
         if self not in exclude:
+            if self.action:
+                yield self
             for entry in self.entries.values():
                 yield from entry.iter_files(exclude)
 

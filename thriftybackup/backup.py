@@ -236,7 +236,8 @@ class RCloneBackup:
             with self.large_files_path.open('w') as f:
                 for entry in large_entries:
                     size = format_size(entry.transfer_size, True)
-                    print(f'{size}   {entry.path}', file=f)
+                    suffix = '/' if isinstance(entry, Directory) else ''
+                    print(f'{size}   {entry.path}{suffix}', file=f)
             self._app.threshold_exceeded(self, backup_size, large_entries)
             exclude = self.exclude_queue.get()
             if exclude is None:     # user skipped the backup
