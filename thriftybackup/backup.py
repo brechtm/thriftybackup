@@ -12,7 +12,7 @@ from subprocess import CompletedProcess, run, Popen, PIPE, CalledProcessError
 from tempfile import TemporaryDirectory
 
 from . import CONFIG_DIR, CACHE_DIR
-from .filesystem import Directory, Link
+from .filesystem import Directory
 from .util import format_size
 
 
@@ -346,8 +346,6 @@ class RCloneBackup:
     def _get_item_size(self, log_msg):
         if log_msg['msg'].startswith('Copied'):
             file_path = log_msg['object']
-            if file_path.endswith('.rclonelink'):
-                file_path, _ = splitext(file_path)
             return self.tree.get(file_path).size
         elif self.dry_run and log_msg.get('skipped') == 'copy':
             return log_msg.get('size')
