@@ -1,6 +1,7 @@
 
 import os
 
+from argparse import ArgumentParser
 from functools import partial
 from pathlib import Path
 from queue import Empty, Queue
@@ -350,4 +351,12 @@ def app(echo=False, progress=False, dry_run=False):
 
 
 if __name__ == "__main__":
-    app(echo=True, progress=False, dry_run=False)
+    parser = ArgumentParser()
+    parser.add_argument('--echo', action='store_true',
+                        help='echo executed commands')
+    parser.add_argument('--progress', action='store_true',
+                        help='pass --progress to rclone sync calls')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='dry-run the actual backup process')
+    args = parser.parse_args()
+    app(echo=args.echo, progress=args.progress, dry_run=args.dry_run)
