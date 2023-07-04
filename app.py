@@ -4,7 +4,7 @@ import os
 from functools import partial
 from pathlib import Path
 from queue import Empty, Queue
-from subprocess import run, Popen, DEVNULL, CalledProcessError
+from subprocess import run, Popen, DEVNULL
 from threading import Thread
 
 import rumps
@@ -50,10 +50,6 @@ class BackupDaemon:
         self._thread = Thread(target=self._main_loop)
         self._backup = None     # running backup
 
-    def _load_configuration(self):
-        return Configuration(CONFIG_PATH, echo=self.echo, progress=self.progess,
-                             dry_run=self.dry_run)
-
     def _main_loop(self):
         while True:
             try:
@@ -63,7 +59,6 @@ class BackupDaemon:
                 backup.backup(self._proxy, force=True)
             except Empty:
                 for backup in self.configurations:
-                    backup = backup
                     if backup.backup(self._proxy):
                         break   # only continue to next backup if current one is skipped
 
@@ -72,7 +67,8 @@ class BackupDaemon:
 
     @property
     def configurations(self):
-        config = self._load_configuration()
+        config = Configuration(CONFIG_PATH, echo=self.echo,
+                               progress=self.progess, dry_run=self.dry_run)
         yield from config.values()
 
     def backup_now(self, backup):
@@ -137,6 +133,11 @@ class MenuBarApp(rumps.App):
 
     def backup_now(self, _, backup):
         self.daemon.backup_now(backup)
+
+    @interface
+    def notify_volume_not_mounted(self, backup, volume):
+        rumps.notification(f"{backup.name}: Could not backup", None,
+                           f"The volume {volume} is not mounted.")        
 
     @interface
     def prepare(self, backup):

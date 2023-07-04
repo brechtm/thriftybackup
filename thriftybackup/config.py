@@ -94,4 +94,11 @@ CONFIG_TEMPLATE = f"""\
 # destination = "backup:home"
 # interval = "4 hours"
 # threshold = "100 MB"
+
+# [Photos]
+## passes ~/.config/thriftybackup/Photos.exclude as exclude file to rclone
+# source = "/Volumes/Photos"
+# destination = "backup:Photos"
+## no interval set; backups need to be started manually through the menu
+# threshold = "1 GB"
 """

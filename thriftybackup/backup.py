@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from itertools import chain
 from pathlib import Path
 from queue import Queue
-from os.path import splitext
 from subprocess import CompletedProcess, run, Popen, PIPE, CalledProcessError
 from tempfile import TemporaryDirectory
 
@@ -79,10 +78,15 @@ class RCloneBackup:
         self._app = None
         self.tree = None
         self.exclude_queue = Queue(maxsize=1)
-        self.device, self.snapshot = self.get_last_snapshot()
-        self.timestamp = RE_SNAPSHOT.match(self.snapshot).group(1)
         self._tempdir = None
         self.mount_point = None
+
+    @property
+    def source_volume(self):
+        if self.source.is_relative_to('/Volumes'):
+            return Path(*self.source.parts[:3])
+        else:
+            return None
 
     @property
     def destination_latest(self):
@@ -121,8 +125,14 @@ class RCloneBackup:
             del self._tempdir
 
     def get_last_snapshot(self):
-        du_info = self._run([DISKUTIL, 'info', '-plist', '/System/Volumes/Data'],
-                            echo=self.echo, check=True, capture_output=True).stdout
+        source_mount = self.source_volume or '/System/Volumes/Data'
+        try:
+            du_info = self._run([DISKUTIL, 'info', '-plist', source_mount],
+                                echo=self.echo, check=True, capture_output=True).stdout
+        except CalledProcessError as exc:
+            if exc.returncode == 1:
+                raise VolumeNotMounted(source_mount)
+            raise
         device = plistlib.loads(du_info)['DeviceIdentifier']
         while True:
             output = self._run([DISKUTIL, 'apfs', 'listSnapshots', '-plist', device],
@@ -133,19 +143,25 @@ class RCloneBackup:
             self._run([TMUTIL, 'localsnapshot'], echo=self.echo, check=True)
         return device, snapshot
 
-    def mount_snapshot(self):
+    def mount_snapshot(self, device, snapshot):
         self._tempdir = TemporaryDirectory()
         self.mount_point = Path(self._tempdir.name)
-        print(f'Mounting {self.snapshot} at {self.mount_point}')
-        run([MOUNT_APFS, '-s', self.snapshot, '-o', 'nobrowse',
-             f'/dev/{self.device}', self.mount_point], check=True)
+        print(f'Mounting {snapshot} at {self.mount_point}')
+        run([MOUNT_APFS, '-s', snapshot, '-o', 'nobrowse',
+             f'/dev/{device}', self.mount_point], check=True)
         
     def unmount_snapshot(self):
         run([UMOUNT, self.mount_point], check=True)        
 
     def backup(self, app, force=False):
-        if not (self.interval or force):
+        if not (self.interval or force):    # backups without interval set need
+            return False                    #  to be started manually
+        try:
+            device, snapshot = self.get_last_snapshot()
+        except VolumeNotMounted as exc:
+            app.notify_volume_not_mounted(self, exc.volume)
             return False
+        self.timestamp = RE_SNAPSHOT.match(snapshot).group(1)
         self.logs_path.mkdir(parents=True, exist_ok=True)
         try:
             self.rclone('mkdir', self.destination_latest, dry_run=False)
@@ -154,7 +170,7 @@ class RCloneBackup:
             if error.returncode == 1:   # connection error
                 return False
             raise
-        local_timestamp = snapshot_datetime(self.snapshot)
+        local_timestamp = snapshot_datetime(snapshot)
         if last_log:
             log_timestamp = timestamp_from_log(last_log)
             last_age = local_timestamp - datetime.fromisoformat(log_timestamp)
@@ -166,7 +182,7 @@ class RCloneBackup:
             elif not force and last_age < self.interval:
                 print(f"{self.name}: last backup is only {last_age} old (< {self.interval})")
                 return False
-        self.mount_snapshot()
+        self.mount_snapshot(device, snapshot)
         self._app = app
         try:
             return self.perform_backup(last_log)
@@ -266,7 +282,8 @@ class RCloneBackup:
         return backup_performed
 
     def sync_popen(self, *args, dry_run=False):
-        snapshot_source = self.mount_point / self.source.relative_to('/')
+        source_root = self.source_volume or '/'
+        snapshot_source = self.mount_point / self.source.relative_to(source_root)
         extra = list(chain(['--bwlimit', self.bwlimit] if self.bwlimit else [],
                            ['--dry-run'] if dry_run else [],
                            ['--progress'] if self.progress else []))
@@ -408,3 +425,11 @@ RCLONE_EXIT_CODES = {
   8: "Transfer exceeded - limit set by --max-transfer reached",
   9: "Operation successful, but no files transferred",
 }
+
+
+class VolumeNotMounted(Exception):
+    """Volume refernced in configuration is not mounted"""
+    
+    def __init__(self, volume):
+        super().__init__()
+        self.volume = volume
