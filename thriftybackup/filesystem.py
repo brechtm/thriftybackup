@@ -1,4 +1,5 @@
 
+import json
 
 from functools import cached_property
 from itertools import chain
@@ -103,3 +104,15 @@ class Directory(Entry):
     def to_ncdu(self, name):
         return [dict(name=name),
                 *(entry.to_ncdu(name) for name, entry in self.entries.items())]
+
+
+class Root(Directory):
+    def __init__(self, source_path):
+        super().__init__('')
+        self.source_path = source_path
+    
+    def write_ncdu_export(self, ncdu_export_path):
+        ncdu = [1, 2, dict(progname='thriftybackup', progver='0.0.0', timestamp=0),
+                self.to_ncdu(str(self.source_path))]
+        with ncdu_export_path.open('w') as f:
+            json.dump(ncdu, f)

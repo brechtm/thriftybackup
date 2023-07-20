@@ -124,9 +124,12 @@ class MenuBarApp(rumps.App):
             self.add_menuitem('Edit exclude file', edit_exclude, parent=menu)
             menu.add(rumps.separator)
             self.add_menuitem('Last backups:', parent=menu)
-            for snapshot, size in backup.last_backups():
+            for snapshot, size, sync_json in backup.last_backups():
                 size_str = format_size(size, True).replace(' ', '\u2007')
-                self.add_menuitem(f"{snapshot}\t{size_str}", parent=menu)   # TODO: callback=ncdu
+                show_files = partial(self.show_files, ncdu_export_path=sync_json,
+                                     remote=True)
+                self.add_menuitem(f"{snapshot}\t{size_str}", show_files,
+                                  parent=menu)
         self.menu.add(rumps.separator)
         self.add_menuitem('Edit configuration', self.edit_config_file, ',')
         self.add_menuitem('Install command-line tool', self.install_thrifty, 'c')
@@ -176,7 +179,7 @@ class MenuBarApp(rumps.App):
                                     exclude_file=backup.exclude_file,
                                     large_files_file=backup.large_files_path)
         self.add_menuitem('Edit Exclude File', edit_exclude_file, 'x')
-        self.add_show_files_menu_item(backup.ncdu_export_path)
+        self.add_show_files_menu_item(backup.scout_ncdu_export_path)
         self.menu.add(rumps.separator)
         self.add_menuitem('Select all', self.select_all, 'a')
         self.add_menuitem('Deselect all', self.deselect_all, 'd')
@@ -241,7 +244,7 @@ class MenuBarApp(rumps.App):
         self.total_bytes = total_bytes
         self.menu.clear()
         self.progress_menu_item = self.add_menuitem('Starting backup...')
-        self.add_show_files_menu_item(backup.ncdu_export_path)
+        self.add_show_files_menu_item(backup.scout_ncdu_export_path)
         self.add_menuitem('Abort Backup', self.abort_backup, 'a')
         self.set_title(format_size(total_bytes))
 
@@ -274,8 +277,9 @@ class MenuBarApp(rumps.App):
         if large_files_file:
             Popen(['qlmanage', '-p', large_files_file], stderr=DEVNULL)
 
-    def show_files(self, _, ncdu_export_path):
-        script = TERMINAL_NCDU.format(file=ncdu_export_path)
+    def show_files(self, _, ncdu_export_path, remote=False):
+        cat = 'rclone cat' if remote else 'cat'
+        script = TERMINAL_NCDU.format(cat=cat, file=ncdu_export_path)
         run(['osascript', '-e', script])
 
     def abort_backup(self, _):
@@ -293,7 +297,7 @@ THRIFTY_PROXY = Path('/usr/local/bin') / THRIFTY.name
 
 TERMINAL_NCDU = """
 tell app "Terminal"
-  do script "ncdu --color off --apparent-size -f {file}; exit"
+  do script "{cat} {file} | ncdu --color off --apparent-size -f - && exit"
   set current settings of first window to settings set "ocean"
   activate
 end tell

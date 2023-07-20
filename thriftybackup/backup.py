@@ -11,7 +11,7 @@ from subprocess import CompletedProcess, run, Popen, PIPE, CalledProcessError
 from tempfile import TemporaryDirectory
 
 from . import CONFIG_DIR, CACHE_DIR
-from .filesystem import Directory
+from .filesystem import Directory, Root
 from .util import format_size
 
 
@@ -31,13 +31,6 @@ from .util import format_size
 # - keep ncdu along with log file
 
 # change ~/Library to include-only
-
-
-def write_ncdu_export(root, tree, ncdu_export_path):
-    ncdu = [1, 2, dict(progname=__file__, progver='0.0.0', timestamp=0),
-            tree.to_ncdu(str(root))]
-    with ncdu_export_path.open('w') as f:
-        json.dump(ncdu, f)
 
 
 # phases:
@@ -105,8 +98,12 @@ class RCloneBackup:
         return basename.with_suffix(f'.{extension}')
 
     @property
-    def ncdu_export_path(self):
+    def scout_ncdu_export_path(self):
         return self.file_path('scout', 'json')
+
+    @property
+    def sync_ncdu_export_path(self):
+        return self.file_path('sync', 'json')
 
     @property
     def large_files_path(self):
@@ -225,8 +222,9 @@ class RCloneBackup:
         sizes = self.list_files(last_size_file, size_files, recursive=True,
                                 files_only=True)
         for size_path in reversed(sizes):
-            _, snapshot, _, size = size_path.rsplit('_', maxsplit=3)
-            yield snapshot, int(size)
+            prefix, snapshot, _, size = size_path.rsplit('_', maxsplit=3)
+            sync_ncdu_json = self.destination / f'{prefix}_{snapshot}_sync.json'
+            yield snapshot, int(size), sync_ncdu_json
 
     def get_last_log(self):
         logs = self.list_files(f"/{self.name}_*_sync.log", recursive=False,
@@ -243,7 +241,6 @@ class RCloneBackup:
     def perform_backup(self, last_log):
         self._app.prepare(self)
         self.tree = self.backup_scout()
-        write_ncdu_export(self.source, self.tree, self.ncdu_export_path)
         backup_size = self.tree.transfer_size
         backup_performed = False
         large_entries = sorted(self.tree.large_entries(self.threshold),
@@ -303,10 +300,11 @@ class RCloneBackup:
             rclone_sync = self.sync_popen(*args, dry_run=True)
             scout_log = self.file_path('scout', 'log')
             with scout_log.open('wb') as log:
-                tree = json_log_to_tree(rclone_sync.stderr, log)
+                tree = scout_log_to_tree(self.source, rclone_sync.stderr, log)
         except CalledProcessError as cpe:
             # TODO: interpret rclone_sync.returncode
             raise
+        tree.write_ncdu_export(self.scout_ncdu_export_path)
         return tree
 
         # TODO: caffeinate
@@ -325,16 +323,12 @@ class RCloneBackup:
             transferred = 0
             sync_log = self.file_path('sync', 'log')
             with sync_log.open('wb') as log:
-                for line in sync.stderr:
-                    log.write(line)
-                    if not (msg := try_json(line)):
-                        print(line)
-                        continue
-                    if size := self._get_item_size(msg):
-                        transferred += size
-                        self._app.update_progress(self, transferred)
-                    elif msg['level'] == 'error':
-                        print('ERROR:', msg['msg'])
+                it = sync_log_to_tree(self.tree, sync.stderr, log, self.dry_run)
+                sync_tree = next(it)
+                for item in it:
+                    transferred += item.size
+                    self._app.update_progress(self, transferred)
+            sync_tree.write_ncdu_export(self.sync_ncdu_export_path)
         except CalledProcessError as cpe:
             rc = cpe.returncode
             info = RCLONE_EXIT_CODES[rc]
@@ -344,13 +338,6 @@ class RCloneBackup:
         transferred_filename = f'{self.name}_{self.timestamp}_transferred_{transferred}'
         self.rclone('touch', self.destination / transferred_filename)
         return True
-
-    def _get_item_size(self, log_msg):
-        if log_msg['msg'].startswith('Copied'):
-            file_path = log_msg['object']
-            return self.tree.get(file_path).size
-        elif self.dry_run and log_msg.get('skipped') == 'copy':
-            return log_msg.get('size')
 
     def continue_backup(self, excluded):
         self.exclude_queue.put_nowait(excluded)
@@ -382,8 +369,8 @@ class RCloneBackup:
 RE_RENAMED_FROM = re.compile('Renamed from "(.*)"')
 
 
-def json_log_to_tree(lines, log_file=None):
-    tree = Directory('')
+def scout_log_to_tree(root_path, lines, log_file=None):
+    tree = Root(root_path)
     for line in lines:
         if log_file:
             log_file.write(line)
@@ -399,6 +386,25 @@ def json_log_to_tree(lines, log_file=None):
             tree.add_file(msg['object'], 0, action='move-dest', source=source)
             tree.get(source).metadata['destination'] = msg['object']
     return tree
+
+
+def sync_log_to_tree(scout_tree, lines, log_file=None, dry_run=False):
+    sync_tree = Root(scout_tree.source_path)
+    yield sync_tree
+    for line in lines:
+        if log_file:
+            log_file.write(line)
+        if not (msg := try_json(line)):
+            print(line)
+            continue
+        if (msg['msg'].startswith('Copied')
+                or (dry_run and msg.get('skipped') == 'copy')):
+            file_path = msg['object']
+            item = scout_tree.get(file_path)
+            sync_tree.add_file(file_path, item.size, action='copy')
+            yield item
+        elif msg['level'] == 'error':
+            print('ERROR:', msg['msg'])
 
 
 def try_json(line):
