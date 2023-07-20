@@ -255,6 +255,12 @@ class MenuBarApp(rumps.App):
              f' of {format_size(self.total_bytes)}')
         self.set_title(f'{transferred / self.total_bytes:.0%}')
 
+    @interface
+    def finish_backup(self, backup):
+        self.title = None
+        self.menu.clear()
+        self.add_menuitem(f'{backup.name}: wrapping up...')
+
     # TODO: extra menu entries:
     # - backup everything
     # - continue but exclude ml dirs/files

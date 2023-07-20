@@ -264,6 +264,7 @@ class RCloneBackup:
             backup_dir = (self.destination / timestamp_from_log(last_log)
                         if last_log else None)
             success = self.backup_sync(backup_dir, exclude)
+            self._app.finish_backup(self)
             if backup_dir:
                 # move the logs from the last backup to the backup dir
                 last_logs = '/' + last_log.replace('sync.log', '*')
