@@ -7,8 +7,9 @@ from datetime import datetime, timedelta
 from itertools import chain
 from pathlib import Path
 from queue import Queue
-from subprocess import CompletedProcess, run, Popen, PIPE, CalledProcessError
+from subprocess import CompletedProcess, run, Popen, PIPE, CalledProcessError, TimeoutExpired
 from tempfile import TemporaryDirectory
+from time import sleep
 
 from . import CONFIG_DIR, CACHE_DIR
 from .filesystem import Directory, Root
@@ -194,7 +195,8 @@ class RCloneBackup:
         finally:
             self.cleanup()
 
-    def rclone(self, *args, dry_run=None, capture=False) -> CompletedProcess or None:
+    def rclone(self, subcmd, *args, dry_run=None, capture=False) \
+            -> CompletedProcess or None:
         """Run short-running rclone command with the given arguments
         
         Args:
@@ -206,9 +208,27 @@ class RCloneBackup:
           rclone CompletedProcess object
         """
         dry_run = self.dry_run if dry_run is None else dry_run
-        cmd = [self.rclone_path, *args]
-        return self._run(cmd, echo=self.echo or dry_run, dry_run=dry_run,
-                         capture_output=capture, encoding='utf-8', check=True)
+        cmd = [self.rclone_path, subcmd, '--use-json-log', *args]
+        stdout = PIPE if capture else None
+        while True:
+            try:
+                process = self._run(cmd, echo=self.echo or dry_run, dry_run=dry_run,
+                                    stdout=stdout, stderr=PIPE, encoding='utf-8',
+                                    check=True)
+                return process
+            except CalledProcessError as cpe:
+                for line in cpe.stderr.splitlines():
+                    if not (log_entry := try_json(line)):
+                        print(line)
+                        continue
+                    msg = log_entry['msg']
+                    if ("no such host" in msg
+                            or "network is unreachable" in msg):
+                        print("Connection error; retrying in 5 seconds...")
+                        sleep(5)
+                        break
+                    else:
+                        raise NotImplementedError(log_entry)
 
     def list_files(self, *include, exclude=None, recursive=True,
                    dirs_only=False, files_only=False):
@@ -306,13 +326,17 @@ class RCloneBackup:
         if self.exclude_file.exists():
             args.extend(['--exclude-from', self.exclude_file])
         try:
-            rclone_sync = self.sync_popen(*args, dry_run=True)
+            scout = self.sync_popen(*args, dry_run=True)
             scout_log = self.file_path('scout', 'log')
             with scout_log.open('wb') as log:
-                tree = scout_log_to_tree(self.source, rclone_sync.stderr, log)
+                tree = scout_log_to_tree(self.source, scout.stderr, log)
         except CalledProcessError as cpe:
             # TODO: interpret rclone_sync.returncode
             raise
+        try:    # FIXME: why doesn't rclone always exit when sync is complete?
+            scout.wait(timeout=3)
+        except TimeoutExpired:
+            scout.terminate()
         tree.write_ncdu_export(self.scout_ncdu_export_path)
         return tree
 
@@ -344,6 +368,10 @@ class RCloneBackup:
             print(f"rclone returned non-zero exit status {rc} - {info}")
             print(f"The log file is {sync_log}")
             return False
+        try:    # FIXME: why doesn't rclone always exit when sync is complete?
+            sync.wait(timeout=3)
+        except TimeoutExpired:
+            sync.terminate()
         transferred_filename = f'{self.name}_{self.timestamp}_transferred_{transferred}'
         self.rclone('touch', self.destination / transferred_filename)
         return True
