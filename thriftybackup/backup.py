@@ -144,8 +144,13 @@ class RCloneBackup:
         self._tempdir = TemporaryDirectory()
         self.mount_point = Path(self._tempdir.name)
         print(f'Mounting {snapshot} at {self.mount_point}')
-        run([MOUNT_APFS, '-s', snapshot, '-o', 'nobrowse',
-             f'/dev/{device}', self.mount_point], check=True)
+        try:
+            run([MOUNT_APFS, '-s', snapshot, '-o', 'nobrowse',
+                 f'/dev/{device}', self.mount_point], check=True)
+        except CalledProcessError as cpe:
+            if cpe.returncode == 75:
+                raise TimeMachineBackupInProgress
+            raise
         
     def unmount_snapshot(self):
         run([UMOUNT, self.mount_point], check=True)        
@@ -179,7 +184,10 @@ class RCloneBackup:
             elif not force and last_age < self.interval:
                 print(f"{self.name}: last backup is only {last_age} old (< {self.interval})")
                 return False
-        self.mount_snapshot(device, snapshot)
+        try:
+            self.mount_snapshot(device, snapshot)
+        except TimeMachineBackupInProgress:
+            return False
         self._app = app
         try:
             return self.perform_backup(last_log)
@@ -440,3 +448,7 @@ class VolumeNotMounted(Exception):
     def __init__(self, volume):
         super().__init__()
         self.volume = volume
+
+
+class TimeMachineBackupInProgress(Exception):
+    pass
