@@ -4,7 +4,7 @@ import tomllib
 from datetime import timedelta
 from pathlib import Path
 
-from .backup import RCloneBackup
+from .backup import BackupConfig
 from .util import EXPONENTS
 
 
@@ -61,7 +61,7 @@ class Configuration(dict):
                 pass    # threshold is a number
             except AttributeError:
                 self._syntax_error('threshold', section=name)
-        return RCloneBackup(name, src, dest, interval, threshold,
+        return BackupConfig(name, src, dest, interval, threshold,
                             bwlimit=self.bwlimit, rclone=self.rclone,
                             echo=self.echo, progress=self.progress,
                             dry_run=self.dry_run)

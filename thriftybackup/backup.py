@@ -53,147 +53,13 @@ MOUNT_APFS = '/sbin/mount_apfs'
 UMOUNT = '/sbin/umount'
 
 
-class RCloneBackup:
-
-    def __init__(self, name, source, destination, interval, threshold,
-                 bwlimit=None, rclone='rclone', echo=False, progress=False,
-                 dry_run=False):
-        self.name = name
-        self.source = Path(source)
-        self.destination = Path(destination)
-        self.interval = interval
-        self.threshold = threshold
-        self.bwlimit = bwlimit
-        self.rclone_path = rclone
-        self.echo = echo
-        self.progress = progress
-        self.dry_run = dry_run
-
-        self._app = None
-        self.tree = None
-        self.exclude_queue = Queue(maxsize=1)
-        self._tempdir = None
-        self.mount_point = None
-
-    @property
-    def source_volume(self):
-        if self.source.is_relative_to('/Volumes'):
-            return Path(*self.source.parts[:3])
-        else:
-            return None
-
-    @property
-    def destination_latest(self):
-        return self.destination / 'latest'
-
-    @property
-    def exclude_file(self):
-        return CONFIG_DIR / f'{self.name}.exclude'        
-
-    @property
-    def logs_path(self):
-        return CACHE_DIR / self.name
-
-    def file_path(self, label, extension):
-        basename = self.logs_path / f'{self.name}_{self.timestamp}_{label}'
-        return basename.with_suffix(f'.{extension}')
-
-    @property
-    def scout_ncdu_export_path(self):
-        return self.file_path('scout', 'json')
-
-    @property
-    def sync_ncdu_export_path(self):
-        return self.file_path('sync', 'json')
-
-    @property
-    def large_files_path(self):
-        return self.file_path('large', 'log')
-
+class RcloneMixin:
+    
     def _run(self, args, echo=False, dry_run=False, **kwargs):
         if echo:
             print(' '.join(map(str, args)))
         if not dry_run:
             return run(args, **kwargs)
-
-    def cleanup(self):
-        # TODO: stop thread
-        if hasattr(self, '_tempdir'):
-            self.unmount_snapshot()
-            del self._tempdir
-
-    def get_last_snapshot(self):
-        source_mount = self.source_volume or '/System/Volumes/Data'
-        try:
-            du_info = self._run([DISKUTIL, 'info', '-plist', source_mount],
-                                echo=self.echo, check=True, capture_output=True).stdout
-        except CalledProcessError as exc:
-            if exc.returncode == 1:
-                raise VolumeNotMounted(source_mount)
-            raise
-        device = plistlib.loads(du_info)['DeviceIdentifier']
-        while True:
-            output = self._run([DISKUTIL, 'apfs', 'listSnapshots', '-plist', device],
-                               echo=self.echo, check=True, capture_output=True).stdout
-            snapshot = plistlib.loads(output)['Snapshots'][-1]['SnapshotName']
-            if datetime.now() - snapshot_datetime(snapshot) < timedelta(hours=1):
-                break
-            self._run([TMUTIL, 'localsnapshot'], echo=self.echo, check=True)
-        return device, snapshot
-
-    def mount_snapshot(self, device, snapshot):
-        self._tempdir = TemporaryDirectory()
-        self.mount_point = Path(self._tempdir.name)
-        print(f'Mounting {snapshot} at {self.mount_point}')
-        try:
-            run([MOUNT_APFS, '-s', snapshot, '-o', 'nobrowse',
-                 f'/dev/{device}', self.mount_point], check=True)
-        except CalledProcessError as cpe:
-            if cpe.returncode == 75:
-                raise TimeMachineBackupInProgress
-            raise
-        
-    def unmount_snapshot(self):
-        run([UMOUNT, self.mount_point], check=True)        
-
-    def backup(self, app, force=False):
-        if not (self.interval or force):    # backups without interval set need
-            return False                    #  to be started manually
-        try:
-            device, snapshot = self.get_last_snapshot()
-        except VolumeNotMounted as exc:
-            app.notify_volume_not_mounted(self, exc.volume)
-            return False
-        self.timestamp = RE_SNAPSHOT.match(snapshot).group(1)
-        self.logs_path.mkdir(parents=True, exist_ok=True)
-        try:
-            self.rclone('mkdir', self.destination_latest, dry_run=False)
-            last_log = self.get_last_log()
-        except CalledProcessError as error:
-            if error.returncode == 1:   # connection error
-                return False
-            raise
-        local_timestamp = snapshot_datetime(snapshot)
-        if last_log:
-            log_timestamp = timestamp_from_log(last_log)
-            last_age = local_timestamp - datetime.fromisoformat(log_timestamp)
-            if last_age == timedelta(0):
-                print(f"{self.name}: the last local snapshot was already backed up")
-                if force:
-                    app.last_snapshot_already_backed_up(self, local_timestamp)
-                return False
-            elif not force and last_age < self.interval:
-                print(f"{self.name}: last backup is only {last_age} old (< {self.interval})")
-                return False
-        try:
-            self.mount_snapshot(device, snapshot)
-        except TimeMachineBackupInProgress:
-            return False
-        self._app = app
-        try:
-            return self.perform_backup(last_log)
-        finally:
-            self.cleanup()
 
     def rclone(self, subcmd, *args, dry_run=None, capture=False) \
             -> CompletedProcess or None:
@@ -241,18 +107,52 @@ class RCloneBackup:
                                *args, dry_run=False, capture=True)
         return sorted(list_cmd.stdout.splitlines())
 
-    def last_backups(self, number=10):
-        snapshots = self.list_files(recursive=False, dirs_only=True)
-        assert snapshots.pop() == 'latest'
-        dirs_list = ','.join(snapshots[-number:])
-        last_size_file = f'/{self.name}_*_transferred_*'
-        size_files = f"/{{{dirs_list}}}/{self.name}_*_transferred_*"
-        sizes = self.list_files(last_size_file, size_files, recursive=True,
-                                files_only=True)
-        for size_path in reversed(sizes):
-            prefix, snapshot, _, size = size_path.rsplit('_', maxsplit=3)
-            sync_ncdu_json = self.destination / f'{prefix}_{snapshot}_sync.json'
-            yield snapshot, int(size), sync_ncdu_json
+
+class BackupConfig(RcloneMixin):
+
+    def __init__(self, name, source, destination, interval, threshold,
+                 bwlimit=None, rclone='rclone', echo=False, progress=False,
+                 dry_run=False):
+        self.name = name
+        self.source = Path(source)
+        self.destination = Path(destination)
+        self.interval = interval
+        self.threshold = threshold
+        self.bwlimit = bwlimit
+        self.rclone_path = rclone
+        self.echo = echo
+        self.progress = progress
+        self.dry_run = dry_run
+
+    @property
+    def source_volume(self):
+        if self.source.is_relative_to('/Volumes'):
+            return Path(*self.source.parts[:3])
+        else:
+            return None
+
+    @property
+    def exclude_file(self):
+        return CONFIG_DIR / f'{self.name}.exclude'
+
+    def get_last_snapshot(self):
+        source_mount = self.source_volume or '/System/Volumes/Data'
+        try:
+            du_info = self._run([DISKUTIL, 'info', '-plist', source_mount],
+                                echo=self.echo, check=True, capture_output=True).stdout
+        except CalledProcessError as exc:
+            if exc.returncode == 1:
+                raise VolumeNotMounted(source_mount)
+            raise
+        device = plistlib.loads(du_info)['DeviceIdentifier']
+        while True:
+            output = self._run([DISKUTIL, 'apfs', 'listSnapshots', '-plist', device],
+                               echo=self.echo, check=True, capture_output=True).stdout
+            snapshot = plistlib.loads(output)['Snapshots'][-1]['SnapshotName']
+            if datetime.now() - snapshot_datetime(snapshot) < timedelta(hours=1):
+                break
+            self._run([TMUTIL, 'localsnapshot'], echo=self.echo, check=True)
+        return device, snapshot
 
     def get_last_log(self):
         logs = self.list_files(f"/{self.name}_*_sync.log", recursive=False,
@@ -266,12 +166,131 @@ class RCloneBackup:
                              f" {self.destination}!")
         return last_log
 
-    def perform_backup(self, last_log):
+    def last_backups(self, number=10):
+        snapshots = self.list_files(recursive=False, dirs_only=True)
+        assert snapshots.pop() == 'latest'
+        dirs_list = ','.join(snapshots[-number:])
+        last_size_file = f'/{self.name}_*_transferred_*'
+        size_files = f"/{{{dirs_list}}}/{self.name}_*_transferred_*"
+        sizes = self.list_files(last_size_file, size_files, recursive=True,
+                                files_only=True)
+        for size_path in reversed(sizes):
+            prefix, snapshot, _, size = size_path.rsplit('_', maxsplit=3)
+            sync_ncdu_json = self.destination / f'{prefix}_{snapshot}_sync.json'
+            yield snapshot, int(size), sync_ncdu_json
+
+    def backup(self, app, force=False):
+        if not (self.interval or force):    # backups without interval set need
+            return False                    #  to be started manually
+        try:
+            device, snapshot = self.get_last_snapshot()
+        except VolumeNotMounted as exc:
+            app.notify_volume_not_mounted(self, exc.volume)
+            return False
+        last_log = self.get_last_log()
+        local_timestamp = snapshot_datetime(snapshot)
+        if last_log:
+            log_timestamp = timestamp_from_log(last_log)
+            last_age = local_timestamp - datetime.fromisoformat(log_timestamp)
+            if last_age == timedelta(0):
+                print(f"{self.name}: the last local snapshot was already backed up")
+                if force:
+                    app.last_snapshot_already_backed_up(self, local_timestamp)
+                return False
+            elif not force and last_age < self.interval:
+                print(f"{self.name}: last backup is only {last_age} old (< {self.interval})")
+                return False
+        try:
+            task = BackupTask(self, device, snapshot, last_log, app)
+        except TimeMachineBackupInProgress:
+            return False
+        task.perform()
+        return True
+
+
+class BackupTask(RcloneMixin):
+
+    def __init__(self, config, device, snapshot, last_log, app):
+        self.config = config
+        self._app = app
+        self.last_log = last_log
+        self._tempdir = TemporaryDirectory()
+        self.mount_point = self.mount_snapshot(device, snapshot)
+        self.timestamp = RE_SNAPSHOT.match(snapshot).group(1)
+        self.exclude_queue = Queue(maxsize=1)
+
+    def __getattr__(self, name):
+        # if attribute isn't set in this class, look it up in the configuration
+        return getattr(self.config, name)
+
+    @property
+    def destination_latest(self):
+        return self.destination / 'latest'
+
+    @property
+    def backup_directory(self):
+        if self.last_log:
+            return self.destination / timestamp_from_log(self.last_log)
+        return None
+
+    @property
+    def logs_path(self):
+        return CACHE_DIR / self.name
+
+    def file_path(self, label, extension):
+        basename = self.logs_path / f'{self.name}_{self.timestamp}_{label}'
+        return basename.with_suffix(f'.{extension}')
+
+    @property
+    def scout_ncdu_export_path(self):
+        return self.file_path('scout', 'json')
+
+    @property
+    def sync_ncdu_export_path(self):
+        return self.file_path('sync', 'json')
+
+    @property
+    def large_files_path(self):
+        return self.file_path('large', 'log')
+
+    def perform(self):
+        self.logs_path.mkdir(parents=True, exist_ok=True)
+        self.rclone('mkdir', self.destination_latest, dry_run=False)
         self._app.prepare(self)
-        self.tree = self.backup_scout()
-        backup_size = self.tree.transfer_size
-        backup_performed = False
-        large_entries = sorted(self.tree.large_entries(self.threshold),
+        try:
+            tree = self.backup_scout()
+            backup_size, exclude = self.get_user_feedback(tree)
+            if backup_size != 0:
+                self._app.start_backup(self, backup_size)
+                success = self.backup_sync(tree, exclude)
+                self._app.finish_backup(self)
+                self.finalize()
+        finally:
+            self.cleanup()
+            self._app.idle()
+
+    def cleanup(self):
+        self.unmount_snapshot()
+        del self._tempdir
+
+    def mount_snapshot(self, device, snapshot):
+        mount_point = Path(self._tempdir.name)
+        print(f'Mounting {snapshot} at {mount_point}')
+        try:
+            run([MOUNT_APFS, '-s', snapshot, '-o', 'nobrowse',
+                 f'/dev/{device}', mount_point], check=True)
+        except CalledProcessError as cpe:
+            if cpe.returncode == 75:
+                raise TimeMachineBackupInProgress
+            raise
+        return mount_point
+
+    def unmount_snapshot(self):
+        run([UMOUNT, self.mount_point], check=True)
+
+    def get_user_feedback(self, tree):
+        backup_size = tree.transfer_size
+        large_entries = sorted(tree.large_entries(self.threshold),
                                key=lambda e: e.transfer_size, reverse=True)
         if large_entries:
             with self.large_files_path.open('w') as f:
@@ -287,25 +306,7 @@ class RCloneBackup:
                 backup_size -= sum(entry.transfer_size for entry in exclude)
         else:
             exclude = []
-        if backup_size != 0:
-            self._app.start_backup(self, backup_size)
-            backup_dir = (self.destination / timestamp_from_log(last_log)
-                        if last_log else None)
-            success = self.backup_sync(backup_dir, exclude)
-            self._app.finish_backup(self)
-            if backup_dir:
-                # move the logs from the last backup to the backup dir
-                last_logs = '/' + last_log.replace('sync.log', '*')
-                self.rclone('move', '--include', last_logs,
-                            self.destination, backup_dir)
-                self.record_backup_size(backup_dir)
-            # copy logs for this backup to the remote
-            local_logs = self.file_path('*', '*')
-            self.rclone('copy', '--include', local_logs.name,
-                        local_logs.parent, self.destination)
-            backup_performed = True
-        self._app.idle()
-        return backup_performed
+        return backup_size, exclude
 
     def sync_popen(self, *args, dry_run=False):
         source_root = self.source_volume or '/'
@@ -342,21 +343,22 @@ class RCloneBackup:
 
         # TODO: caffeinate
         # FIXME: abort subprocesses on App quit
-    def backup_sync(self, backup_dir, exclude):
+    def backup_sync(self, tree, exclude):
         files_txt = self.file_path('files', 'txt')
         with files_txt.open('w') as files:
-            for file in self.tree.iter_files(exclude=exclude):
+            for file in tree.iter_files(exclude=exclude):
                 print(file.path, file=files)
                 if file.path.suffix == '.rclonelink':   # rclone issue #6855
                     print(file.path.with_suffix(''), file=files)
-        backupdir_args = ['--backup-dir', backup_dir] if backup_dir else []
+        backupdir_args = (['--backup-dir', self.backup_directory]
+                          if self.backup_directory else [])
         try:
             sync = self.sync_popen('--files-from-raw', files_txt,
                                    *backupdir_args, dry_run=self.dry_run)
             transferred = 0
             sync_log = self.file_path('sync', 'log')
             with sync_log.open('wb') as log:
-                it = sync_log_to_tree(self.tree, sync.stderr, log, self.dry_run)
+                it = sync_log_to_tree(tree, sync.stderr, log, self.dry_run)
                 sync_tree = next(it)
                 for item in it:
                     transferred += item.size
@@ -378,9 +380,21 @@ class RCloneBackup:
 
     def continue_backup(self, excluded):
         self.exclude_queue.put_nowait(excluded)
-        
+
     def skip_backup(self):
         self.exclude_queue.put_nowait(None)
+
+    def finalize(self):
+        if self.backup_directory:
+            # move the logs from the last backup to the backup dir
+            last_logs = '/' + self.last_log.replace('sync.log', '*')
+            self.rclone('move', '--include', last_logs,
+                        self.destination, self.backup_directory)
+            self.record_backup_size(self.backup_directory)
+        # copy logs for this backup to the remote
+        local_logs = self.file_path('*', '*')
+        self.rclone('copy', '--include', local_logs.name,
+                    local_logs.parent, self.destination)
 
     def record_backup_size(self, backupdir):
         size_cmd = self.rclone('size', '--json', backupdir, capture=True)

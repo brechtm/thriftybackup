@@ -49,7 +49,6 @@ class BackupDaemon:
         self._proxy = AppProxy(app)
         self._backup_now = Queue(maxsize=1)
         self._thread = Thread(target=self._main_loop)
-        self._backup = None     # running backup
 
     def _main_loop(self):
         while True:
