@@ -111,6 +111,16 @@ class MenuBarApp(rumps.App):
         show_files = partial(self.show_files, ncdu_export_path=ncdu_export_path)
         self.add_menuitem('Show Files', show_files, 'f')
 
+    @rumps.notifications
+    def notification_center(self, data):
+        try:
+            notification_type = data['type']
+        except TypeError:
+            return
+        match notification_type:
+            case 'threshold_exceeded':
+                self.show_files(None, data['ncdu_export_path'])
+
     @interface
     def idle(self):
         self.title = None
@@ -168,7 +178,9 @@ class MenuBarApp(rumps.App):
         self.menu.clear()
         self.total_size = total_size
         rumps.notification(f"{backup.name}: Backup size exceeds treshold", None,
-                           f"Total backup size: {format_size(total_size)}")
+                           f"Total backup size: {format_size(total_size)}",
+                           data=dict(type='threshold_exceeded',
+                                     ncdu_export_path=backup.scout_ncdu_export_path))
         self.set_title(f"{backup.name}: {format_size(total_size)}",
                        color=(1, 0, 0, 1))
         continue_backup = partial(self.continue_backup, backup=backup)
