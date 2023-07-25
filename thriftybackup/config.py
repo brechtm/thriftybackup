@@ -9,7 +9,7 @@ from .util import EXPONENTS
 
 
 class Configuration(dict):
-    def __init__(self, config_path, echo, progress, dry_run) -> None:
+    def __init__(self, config_path, echo=False, progress=False, dry_run=False) -> None:
         self.config_path = config_path
         self.echo = echo
         self.progress = progress

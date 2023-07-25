@@ -207,6 +207,20 @@ class BackupConfig(RcloneMixin):
         task.perform()
         return True
 
+    RE_SIZE = re.compile(r"^(.+)\/.*_\1_size_(\d+)$")
+
+    def print_snapshot_sizes(self):
+        size_files = self.list_files(f"/*/{self.name}_*_size_*",
+                                     files_only=True)
+        total = 0
+        print(f"Size of snapshots in {self.destination}")
+        for path in size_files:
+            timestamp, size_str = self.RE_SIZE.match(path).groups()
+            size = int(size_str)
+            print(f"{timestamp:18} {format_size(size, True):>12}")
+            total += size
+        print(f"{'Total:':18} {format_size(total, True):>12}")
+
 
 class BackupTask(RcloneMixin):
 
@@ -401,20 +415,6 @@ class BackupTask(RcloneMixin):
         size = 0 if self.dry_run else json.loads(size_cmd.stdout)['bytes']
         size_filename = f'{self.name}_{backupdir.name}_size_{size}'
         self.rclone('touch', backupdir / size_filename)
-
-    RE_SIZE = re.compile(r"^(.+)\/.*_\1_size_(\d+)$")
-
-    def print_snapshot_sizes(self):
-        size_files = self.list_files(f"/*/{self.name}_*_size_*",
-                                     files_only=True)
-        total = 0
-        print(f"Size of snapshots in {self.destination}")
-        for path in size_files:
-            timestamp, size_str = self.RE_SIZE.match(path).groups()
-            size = int(size_str)
-            print(f"{timestamp:18} {format_size(size, True):>12}")
-            total += size
-        print(f"{'Total:':18} {format_size(total, True):>12}")
 
 
 RE_RENAMED_FROM = re.compile('Renamed from "(.*)"')
