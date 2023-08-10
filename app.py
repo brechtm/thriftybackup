@@ -14,6 +14,8 @@ from AppKit import NSAttributedString
 from Cocoa import NSColor, NSForegroundColorAttributeName
 from Foundation import NSObject
 from PyObjCTools.Conversion import propertyListFromPythonCollection
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 from thriftybackup import CONFIG_DIR, CONFIG_PATH
 from thriftybackup.config import Configuration, CONFIG_TEMPLATE
@@ -24,7 +26,7 @@ from thriftybackup.util import format_size
 #   - list of oversized dirs/files with their size; clicking copies path to clipboard
 #   - continue: go ahead and backup new large items
 #   - show diff: open terminal with ncdu of changes to be backed up
-#   - open exclude file  
+#   - open exclude file
 #   - ? skip backup: try backup again in x hours
 # - allow-file to record paths of allowed large files/dirs
 #   (what about new large files below this dir?)
@@ -39,16 +41,25 @@ from thriftybackup.util import format_size
 CHECK_INTERVAL = 5 * 60     # 5 minutes
 
 
-class BackupDaemon:
+class BackupDaemon(FileSystemEventHandler):
     """Schedules automatic backups and handles requests from the app"""
-    
+
     def __init__(self, app, echo=False, progress=False, dry_run=False) -> None:
         self.echo = echo
         self.progess = progress
         self.dry_run = dry_run
         self._proxy = AppProxy(app)
         self._backup_now = Queue(maxsize=1)
+        # watch the configuration file for changes
+        self._config_observer = Observer()
+        self._config_observer.schedule(self, CONFIG_DIR, recursive=False)
+        self._config_observer.start()
+        self._last_file_timestamp = None
         self._thread = Thread(target=self._main_loop)
+
+    def on_any_event(self, event):
+        if Path(event.src_path) == CONFIG_PATH and event.event_type == 'created':
+            self._proxy.reload_config()
 
     def _main_loop(self):
         while True:
@@ -61,6 +72,7 @@ class BackupDaemon:
                 for backup in self.configurations:
                     if backup.backup(self._proxy):
                         break   # only continue to next backup if current one is skipped
+            self._proxy.idle()
 
     def start(self):
         self._thread.start()
@@ -78,9 +90,11 @@ class BackupDaemon:
         pass    # TODO: call Backup method that calls Popen.terminate()?
     
     def shutdown(self):
+        self._config_observer.stop()
+        self._config_observer.join()
         self._backup_now.put(None)
         self._thread.join()
-    
+
 
 def interface(func):
     """Decorator exposing MenuBarApp functions to RCloneBackup instances"""
@@ -89,7 +103,7 @@ def interface(func):
 
 
 class MenuBarApp(rumps.App):
-    
+
     def __init__(self, echo=False, progress=False, dry_run=False):
         super().__init__('rclone backup', icon='rclone.icns', template=True,
                          quit_button=None)
@@ -97,6 +111,7 @@ class MenuBarApp(rumps.App):
         self.large_entry_menu_items = []
         self.total_size_menu_item = None
         self.progress_menu_item = None
+        self._idling = False
         self.daemon = BackupDaemon(self, echo, progress, dry_run)
         self.daemon.start()
         self.idle()
@@ -143,6 +158,14 @@ class MenuBarApp(rumps.App):
         self.add_menuitem('Edit configuration', self.edit_config_file, ',')
         self.add_menuitem('Install command-line tool', self.install_thrifty, 'c')
         self.add_menuitem('Quit', self.quit, 'q')
+        self._idling = True
+
+    @interface
+    def reload_config(self):
+        if self._idling:
+            rumps.notification("Configuration change detected", None,
+                            "Reloading configuration...")
+            self.idle()
 
     def backup_now(self, _, backup):
         self.daemon.backup_now(backup)
@@ -150,10 +173,16 @@ class MenuBarApp(rumps.App):
     @interface
     def notify_volume_not_mounted(self, backup, volume):
         rumps.notification(f"{backup.name}: Could not backup", None,
-                           f"The volume {volume} is not mounted.")        
+                           f"The volume {volume} is not mounted.")
 
     @interface
-    def prepare(self, backup):
+    def starting(self, backup):
+        self._idling = False
+        self.menu.clear()
+        self.add_menuitem(f'{backup.name}: starting backup...')
+
+    @interface
+    def sizing(self, backup):
         self.menu.clear()
         self.add_menuitem(f'{backup.name}: determining backup size...')
 
@@ -267,7 +296,7 @@ class MenuBarApp(rumps.App):
         self.set_title(f'{transferred / self.total_bytes:.0%}')
 
     @interface
-    def finish_backup(self, backup):
+    def wrapping_up(self, backup):
         self.title = None
         self.menu.clear()
         self.add_menuitem(f'{backup.name}: wrapping up...')
@@ -302,7 +331,7 @@ class MenuBarApp(rumps.App):
     def abort_backup(self, _):
         self.daemon.abort_backup()
         self.idle()
-        
+
     def quit(self, _):
         self.daemon.shutdown()
         rumps.quit_application()
@@ -347,16 +376,16 @@ class AppProxyMeta(type):
         for name, func in MenuBarApp.__dict__.items():
             if getattr(func, 'part_of_interface', False):
                 cls_dict[name] = make_proxy(name)
-        return super().__new__(mcls, classname, bases, cls_dict)       
+        return super().__new__(mcls, classname, bases, cls_dict)
 
 
 class AppProxy(metaclass=AppProxyMeta):
     """Handles communication from RCloneBackup to MenuBarApp"""
-    
+
     def __init__(self, app):
         self.app = app
         self._interface = AppInterface(app)
-        
+
 
 def app(echo=False, progress=False, dry_run=False):
     if not CONFIG_PATH.exists():

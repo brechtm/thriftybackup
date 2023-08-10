@@ -54,7 +54,7 @@ UMOUNT = '/sbin/umount'
 
 
 class RcloneMixin:
-    
+
     def _run(self, args, echo=False, dry_run=False, **kwargs):
         if echo:
             print(' '.join(map(str, args)))
@@ -64,12 +64,12 @@ class RcloneMixin:
     def rclone(self, subcmd, *args, dry_run=None, capture=False) \
             -> CompletedProcess or None:
         """Run short-running rclone command with the given arguments
-        
+
         Args:
           args: command line arguments passed to rclone
           dry_run: if not None, overrides dry_run set for the instance
           capture: capture the output (in stdout attribute of return value)
-        
+
         Returns:
           rclone CompletedProcess object
         """
@@ -180,6 +180,7 @@ class BackupConfig(RcloneMixin):
             yield snapshot, int(size), sync_ncdu_json
 
     def backup(self, app, force=False):
+        app.starting(self)
         if not (self.interval or force):    # backups without interval set need
             return False                    #  to be started manually
         try:
@@ -270,18 +271,19 @@ class BackupTask(RcloneMixin):
     def perform(self):
         self.logs_path.mkdir(parents=True, exist_ok=True)
         self.rclone('mkdir', self.destination_latest, dry_run=False)
-        self._app.prepare(self)
+        self._app.sizing(self)
         try:
             tree = self.backup_scout()
             backup_size, exclude = self.get_user_feedback(tree)
-            if backup_size != 0:
+            if backup_size is None:     # user skipped the backup
+                self._app.wrapping_up(self)
+            elif backup_size != 0:
                 self._app.start_backup(self, backup_size)
                 success = self.backup_sync(tree, exclude)
-                self._app.finish_backup(self)
+                self._app.wrapping_up(self)
                 self.finalize()
         finally:
             self.cleanup()
-            self._app.idle()
 
     def cleanup(self):
         self.unmount_snapshot()
@@ -315,7 +317,7 @@ class BackupTask(RcloneMixin):
             self._app.threshold_exceeded(self, backup_size, large_entries)
             exclude = self.exclude_queue.get()
             if exclude is None:     # user skipped the backup
-                backup_size = 0
+                backup_size = None
             else:
                 backup_size -= sum(entry.transfer_size for entry in exclude)
         else:
@@ -486,7 +488,7 @@ RCLONE_EXIT_CODES = {
 
 class VolumeNotMounted(Exception):
     """Volume refernced in configuration is not mounted"""
-    
+
     def __init__(self, volume):
         super().__init__()
         self.volume = volume
