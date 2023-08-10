@@ -83,14 +83,14 @@ CONFIG_TEMPLATE = f"""\
 
 # rclone = "/usr/local/bin/rclone"
 # bwlimit = "400K"
-# keep_all = "7 days"
-# keep_daily = "31 days"
+
 
 ## Backup configurations
 
 # [home]
 ## passes ~/.config/thriftybackup/home.exclude as exclude file to rclone
 # source = "{Path.home()}"
+## 'backup' below is the name of a remote configured for rclone
 # destination = "backup:home"
 # interval = "4 hours"
 # threshold = "100 MB"
