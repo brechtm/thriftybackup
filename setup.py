@@ -1,6 +1,10 @@
 from setuptools import setup
 
 OPTIONS = {
+    'argv_inject': [
+        '--echo',
+        '--progress',
+    ],
     'argv_emulation': False,
     'plist': {
         'LSUIElement': True,
