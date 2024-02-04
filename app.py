@@ -252,6 +252,7 @@ class MenuBarApp(rumps.App):
             callback=lambda menu_item:
                 self.large_entry_menu_item_clicked(menu_item, str(entry.path))
         )
+        menu_item.state = True
         self.menu.add(menu_item)
         self.large_entry_menu_items.append((menu_item, entry))
 
