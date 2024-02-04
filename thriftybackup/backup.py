@@ -89,7 +89,8 @@ class RcloneMixin:
                         continue
                     msg = log_entry['msg']
                     if ("no such host" in msg
-                            or "network is unreachable" in msg):
+                            or "network is unreachable" in msg
+                            or "error listing: couldn't list files" in msg):
                         print("Connection error; retrying in 5 seconds...")
                         sleep(5)
                         break
