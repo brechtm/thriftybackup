@@ -313,8 +313,9 @@ class BackupTask(RcloneMixin):
 
     def get_user_feedback(self, tree):
         backup_size = tree.transfer_size
-        large_entries = sorted(tree.large_entries(self.threshold),
-                               key=lambda e: e.transfer_size, reverse=True)
+        large_entries = (sorted(tree.large_entries(self.threshold),
+                                key=lambda e: e.transfer_size, reverse=True)
+                         if self.threshold else [])
         if large_entries:
             with self.large_files_path.open('w') as f:
                 for entry in large_entries:
