@@ -94,8 +94,7 @@ class RcloneMixin:
                         print("Connection error; retrying in 5 seconds...")
                         sleep(5)
                         break
-                    else:
-                        raise NotImplementedError(log_entry)
+                    raise RcloneError(cpe.returncode, log_entry)
 
     def list_files(self, *include, exclude=None, recursive=True,
                    dirs_only=False, files_only=False):
@@ -156,10 +155,13 @@ class BackupConfig(RcloneMixin):
         return device, snapshot
 
     def get_last_log(self):
-        logs = self.list_files(f"/{self.name}_*_sync.log", recursive=False,
-                               files_only=True)
-        if not logs:  # this is the first backup
-            return None
+        try:
+            logs = self.list_files(f"/{self.name}_*_sync.log", recursive=False,
+                                files_only=True)
+        except RcloneError as exc:
+            if exc.log_entry['msg'] == "error listing: directory not found":
+                return None     # this is the first backup
+            raise
         try:
             last_log, = logs
         except ValueError:
@@ -168,8 +170,12 @@ class BackupConfig(RcloneMixin):
         return last_log
 
     def last_backups(self, number=10):
-        snapshots = self.list_files(recursive=False, dirs_only=True)
-        assert snapshots.pop() == 'latest'
+        try:
+            snapshots = self.list_files(recursive=False, dirs_only=True)
+        except RcloneError as exc:
+            if exc.log_entry['msg'] == "error listing: directory not found":
+                return
+            raise
         dirs_list = ','.join(snapshots[-number:])
         last_size_file = f'/{self.name}_*_transferred_*'
         size_files = f"/{{{dirs_list}}}/{self.name}_*_transferred_*"
@@ -487,8 +493,16 @@ RCLONE_EXIT_CODES = {
 }
 
 
+class RcloneError(Exception):
+    """Error reported by rclone"""
+    def __init__(self, returncode, log_entry):
+        super().__init__()
+        self.returncode = returncode
+        self.log_entry = log_entry
+
+
 class VolumeNotMounted(Exception):
-    """Volume refernced in configuration is not mounted"""
+    """Volume referenced in configuration is not mounted"""
 
     def __init__(self, volume):
         super().__init__()
