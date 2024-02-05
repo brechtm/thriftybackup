@@ -4,6 +4,7 @@ import plistlib
 import re
 
 from datetime import datetime, timedelta
+from functools import cached_property
 from itertools import chain
 from pathlib import Path
 from queue import Queue
@@ -22,7 +23,7 @@ from .util import format_size
 #   - list of oversized dirs/files with their size; clicking copies path to clipboard
 #   - continue: go ahead and backup new large items
 #   - show diff: open terminal with ncdu of changes to be backed up
-#   - open exclude file  
+#   - open exclude file
 #   - ? skip backup: try backup again in x hours
 # - allow-file to record paths of allowed large files/dirs
 #   (what about new large files below this dir?)
@@ -47,6 +48,7 @@ def snapshot_datetime(snapshot_name):
     return datetime.fromisoformat(timestamp)
 
 
+DF = '/bin/df'
 DISKUTIL = '/usr/sbin/diskutil'
 TMUTIL = '/usr/bin/tmutil'
 MOUNT_APFS = '/sbin/mount_apfs'
@@ -124,25 +126,27 @@ class BackupConfig(RcloneMixin):
         self.progress = progress
         self.dry_run = dry_run
 
-    @property
+    @cached_property
     def source_volume(self):
-        if self.source.is_relative_to('/Volumes'):
-            return Path(*self.source.parts[:3])
-        else:
-            return None
+        df = self._run([DF, '--libxo', 'json', self.source], echo=self.echo,
+                       check=True, capture_output=True).stdout
+        filesystem, = json.loads(df)['storage-system-information']['filesystem']
+        mounted_on = filesystem['mounted-on']
+        if mounted_on == '/':
+            raise RuntimeError("Cannot back up the root volume")
+        return mounted_on
 
     @property
     def exclude_file(self):
         return CONFIG_DIR / f'{self.name}.exclude'
 
     def get_last_snapshot(self):
-        source_mount = self.source_volume or '/System/Volumes/Data'
         try:
-            du_info = self._run([DISKUTIL, 'info', '-plist', source_mount],
+            du_info = self._run([DISKUTIL, 'info', '-plist', self.source_volume],
                                 echo=self.echo, check=True, capture_output=True).stdout
         except CalledProcessError as exc:
             if exc.returncode == 1:
-                raise VolumeNotMounted(source_mount)
+                raise VolumeNotMounted(self.source_volume)
             raise
         device = plistlib.loads(du_info)['DeviceIdentifier']
         while True:
@@ -333,7 +337,8 @@ class BackupTask(RcloneMixin):
         return backup_size, exclude
 
     def sync_popen(self, *args, dry_run=False):
-        source_root = self.source_volume or '/'
+        source_root = ('/' if self.source_volume == '/System/Volumes/Data'
+                       else self.source_volume)
         snapshot_source = self.mount_point / self.source.relative_to(source_root)
         extra = list(chain(['--bwlimit', self.bwlimit] if self.bwlimit else [],
                            ['--dry-run'] if dry_run else [],
