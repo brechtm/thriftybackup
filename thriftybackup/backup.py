@@ -304,8 +304,8 @@ class BackupTask(RcloneMixin):
         mount_point = Path(self._tempdir.name)
         print(f'Mounting {snapshot} at {mount_point}')
         try:
-            run([MOUNT_APFS, '-s', snapshot, '-o', 'nobrowse',
-                 f'/dev/{device}', mount_point], check=True)
+            self._run([MOUNT_APFS, '-s', snapshot, '-o', 'nobrowse',
+                      f'/dev/{device}', mount_point], echo=self.echo, check=True)
         except CalledProcessError as cpe:
             if cpe.returncode == 75:
                 raise TimeMachineBackupInProgress
