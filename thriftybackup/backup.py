@@ -3,6 +3,7 @@ import json
 import plistlib
 import re
 
+from contextlib import suppress
 from datetime import datetime, timedelta
 from functools import cached_property
 from itertools import chain
@@ -152,9 +153,10 @@ class BackupConfig(RcloneMixin):
         while True:
             output = self._run([DISKUTIL, 'apfs', 'listSnapshots', '-plist', device],
                                echo=self.echo, check=True, capture_output=True).stdout
-            snapshot = plistlib.loads(output)['Snapshots'][-1]['SnapshotName']
-            if datetime.now() - snapshot_datetime(snapshot) < timedelta(hours=1):
-                break
+            with suppress(IndexError):
+                snapshot = plistlib.loads(output)['Snapshots'][-1]['SnapshotName']
+                if datetime.now() - snapshot_datetime(snapshot) < timedelta(hours=1):
+                    break
             self._run([TMUTIL, 'localsnapshot'], echo=self.echo, check=True)
         return device, snapshot
 
