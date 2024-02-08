@@ -91,6 +91,7 @@ CONFIG_TEMPLATE = f"""\
 ## passes ~/.config/thriftybackup/home.exclude as exclude file to rclone
 # source = "{Path.home()}"
 ## 'backup' below is the name of a remote configured for rclone
+## Destination directories should be empty to start with!
 # destination = "backup:home"
 # interval = "4 hours"
 # threshold = "100 MB"
