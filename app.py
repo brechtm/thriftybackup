@@ -7,6 +7,7 @@ from pathlib import Path
 from queue import Empty, Queue
 from subprocess import run, Popen, DEVNULL
 from threading import Thread
+from pkg_resources import get_distribution
 
 import rumps
 
@@ -37,7 +38,7 @@ from thriftybackup.util import format_size
 
 # change ~/Library to include-only
 
-
+VERSION = get_distribution('thriftybackup').version
 CHECK_INTERVAL = 5 * 60     # 5 minutes
 
 
@@ -158,6 +159,7 @@ class MenuBarApp(rumps.App):
         self.add_menuitem('Edit configuration', self.edit_config_file, ',')
         self.add_menuitem('Install command-line tool', self.install_thrifty, 'c')
         self.add_menuitem('Quit', self.quit, 'q')
+        self.add_menuitem(f'Version {VERSION}')
         self._idling = True
 
     @interface

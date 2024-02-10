@@ -15,6 +15,7 @@ OPTIONS = {
 
 setup(
     name='ThriftyBackup',
+    version='0.0.2',
     app=['app.py'],
     data_files=['rclone.icns'],
     options={'py2app': OPTIONS},
