@@ -1,5 +1,7 @@
 from setuptools import setup
 
+from thriftybackup import __version__
+
 OPTIONS = {
     'argv_inject': [
         '--echo',
@@ -15,7 +17,7 @@ OPTIONS = {
 
 setup(
     name='ThriftyBackup',
-    version='0.0.2',
+    version=__version__,
     app=['app.py'],
     data_files=['rclone.icns'],
     options={'py2app': OPTIONS},
