@@ -211,6 +211,9 @@ class BackupConfig(RcloneMixin):
             task = BackupTask(self, device, snapshot, last_log, app)
         except TimeMachineBackupInProgress:
             return False
+        except NoFullDiskAccess:
+            app.notify_no_full_disk_access(self)
+            return False
         task.perform()
         return True
 
@@ -304,6 +307,8 @@ class BackupTask(RcloneMixin):
         except CalledProcessError as cpe:
             if cpe.returncode == 75:
                 raise TimeMachineBackupInProgress
+            if cpe.returncode == 77:    # permission denied
+                raise NoFullDiskAccess
             raise
         return mount_point
 
@@ -511,4 +516,8 @@ class VolumeNotMounted(Exception):
 
 
 class TimeMachineBackupInProgress(Exception):
+    pass
+
+
+class NoFullDiskAccess(Exception):
     pass

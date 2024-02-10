@@ -1,5 +1,6 @@
 
 import os
+import webbrowser
 
 from argparse import ArgumentParser
 from functools import partial
@@ -133,6 +134,9 @@ class MenuBarApp(rumps.App):
         match notification_type:
             case 'threshold_exceeded':
                 self.show_files(None, data['ncdu_export_path'])
+            case 'open_system_preferences':
+                webbrowser.open('x-apple.systempreferences:'
+                                'com.apple.preference.security?Privacy_AllFiles')
 
     @interface
     def idle(self):
@@ -164,7 +168,7 @@ class MenuBarApp(rumps.App):
     def reload_config(self):
         if self._idling:
             rumps.notification("Configuration change detected", None,
-                            "Reloading configuration...")
+                               "Reloading configuration...")
             self.idle()
 
     def backup_now(self, _, backup):
@@ -174,6 +178,15 @@ class MenuBarApp(rumps.App):
     def notify_volume_not_mounted(self, backup, volume):
         rumps.notification(f"{backup.name}: Could not backup", None,
                            f"The volume {volume} is not mounted.")
+
+    @interface
+    def notify_no_full_disk_access(self, backup):
+        rumps.notification(f"{backup.name}: Could not backup", None,
+                           "Please grant Full Disk Access to ThriftyBackup"
+                           " in System Preferences > Security & Privacy.",
+                           data=dict(type='open_system_preferences'),
+                           action_button='Open System Preferences',
+                           ignoreDnD=True)
 
     @interface
     def starting(self, backup):
