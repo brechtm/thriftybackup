@@ -128,28 +128,21 @@ class BackupConfig(RcloneMixin):
         self.dry_run = dry_run
 
     @cached_property
-    def source_volume(self):
-        df = self._run([DF, '--libxo', 'json', self.source], echo=self.echo,
-                       check=True, capture_output=True).stdout
-        filesystem, = json.loads(df)['storage-system-information']['filesystem']
-        mounted_on = filesystem['mounted-on']
+    def source_device_volume(self):
+        df = self._run([DF, self.source], encoding='utf-8', check=True,
+                       capture_output=True, echo=self.echo).stdout
+        _, data = df.splitlines()
+        device, *_, mounted_on = data.split(maxsplit=8)
         if mounted_on == '/':
             raise RuntimeError("Cannot back up the root volume")
-        return mounted_on
+        return device, mounted_on
 
     @property
     def exclude_file(self):
         return CONFIG_DIR / f'{self.name}.exclude'
 
     def get_last_snapshot(self):
-        try:
-            du_info = self._run([DISKUTIL, 'info', '-plist', self.source_volume],
-                                echo=self.echo, check=True, capture_output=True).stdout
-        except CalledProcessError as exc:
-            if exc.returncode == 1:
-                raise VolumeNotMounted(self.source_volume)
-            raise
-        device = plistlib.loads(du_info)['DeviceIdentifier']
+        device, _ = self.source_device_volume
         while True:
             output = self._run([DISKUTIL, 'apfs', 'listSnapshots', '-plist', device],
                                echo=self.echo, check=True, capture_output=True).stdout
@@ -306,8 +299,8 @@ class BackupTask(RcloneMixin):
         mount_point = Path(self._tempdir.name)
         print(f'Mounting {snapshot} at {mount_point}')
         try:
-            self._run([MOUNT_APFS, '-s', snapshot, '-o', 'nobrowse',
-                      f'/dev/{device}', mount_point], echo=self.echo, check=True)
+            self._run([MOUNT_APFS, '-s', snapshot, '-o', 'nobrowse', device,
+                       mount_point], echo=self.echo, check=True)
         except CalledProcessError as cpe:
             if cpe.returncode == 75:
                 raise TimeMachineBackupInProgress
@@ -339,8 +332,8 @@ class BackupTask(RcloneMixin):
         return backup_size, exclude
 
     def sync_popen(self, *args, dry_run=False):
-        source_root = ('/' if self.source_volume == '/System/Volumes/Data'
-                       else self.source_volume)
+        _, volume = self.source_device_volume
+        source_root = '/' if volume == '/System/Volumes/Data' else volume
         snapshot_source = self.mount_point / self.source.relative_to(source_root)
         extra = list(chain(['--bwlimit', self.bwlimit] if self.bwlimit else [],
                            ['--dry-run'] if dry_run else [],
