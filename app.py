@@ -304,6 +304,9 @@ class MenuBarApp(rumps.App):
 
     @interface
     def update_progress(self, backup, transferred):
+        # rclone's byte count includes server-side moves, so it can exceed the
+        # size determined by the scout
+        transferred = min(transferred, self.total_bytes)
         self.progress_menu_item.title = \
             (f'{backup.name}: {format_size(transferred)}'
              f' of {format_size(self.total_bytes)}')
