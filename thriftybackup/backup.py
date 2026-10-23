@@ -42,7 +42,7 @@ from .util import format_size
 # 2) wait for user feedback
 # 3) backup
 
-RE_SNAPSHOT = re.compile('com\.apple\.TimeMachine\.(\d{4}-\d{2}-\d{2}-\d{6})\.local')
+RE_SNAPSHOT = re.compile(r'com\.apple\.TimeMachine\.(\d{4}-\d{2}-\d{2}-\d{6})\.local')
 
 def snapshot_datetime(snapshot_name):
     timestamp = RE_SNAPSHOT.match(snapshot_name).group(1)
