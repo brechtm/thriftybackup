@@ -1,5 +1,6 @@
 
 import os
+import traceback
 import webbrowser
 
 from argparse import ArgumentParser
@@ -65,14 +66,24 @@ class BackupDaemon(FileSystemEventHandler):
         while True:
             try:
                 backup = self._backup_now.get(timeout=CHECK_INTERVAL)
+            except Empty:
+                try:
+                    for backup in self.configurations:
+                        if backup.backup(self._proxy):
+                            break   # only continue to next backup if current one is skipped
+                except Exception:
+                    traceback.print_exc()
+            else:
                 if backup is None:  # app asks to quit
                     break
-                backup.backup(self._proxy, force=True)
-            except Empty:
-                for backup in self.configurations:
-                    if backup.backup(self._proxy):
-                        break   # only continue to next backup if current one is skipped
-            self._proxy.idle()
+                try:
+                    backup.backup(self._proxy, force=True)
+                except Exception:
+                    traceback.print_exc()
+            try:
+                self._proxy.idle()
+            except Exception:
+                traceback.print_exc()
 
     def start(self):
         self._thread.start()

@@ -55,6 +55,10 @@ TMUTIL = '/usr/bin/tmutil'
 MOUNT_APFS = '/sbin/mount_apfs'
 UMOUNT = '/sbin/umount'
 
+# Local snapshots can be purged by macOS at any time. If that happens while a
+# backup is running, retry with a fresh snapshot a few times before giving up.
+MAX_SNAPSHOT_RETRIES = 2
+
 
 class RcloneMixin:
 
@@ -189,33 +193,48 @@ class BackupConfig(RcloneMixin):
         app.starting(self)
         if not (self.interval or force):    # backups without interval set need
             return False                    #  to be started manually
-        try:
-            device, snapshot = self.get_last_snapshot()
-        except VolumeNotMounted as exc:
-            app.notify_volume_not_mounted(self, exc.volume)
-            return False
-        last_log = self.get_last_log()
-        local_timestamp = snapshot_datetime(snapshot)
-        if last_log:
-            log_timestamp = timestamp_from_log(last_log)
-            last_age = local_timestamp - datetime.fromisoformat(log_timestamp)
-            if last_age == timedelta(0):
-                print(f"{self.name}: the last local snapshot was already backed up")
-                if force:
-                    app.last_snapshot_already_backed_up(self, local_timestamp)
+        for attempt in range(MAX_SNAPSHOT_RETRIES + 1):
+            try:
+                device, snapshot = self.get_last_snapshot()
+            except VolumeNotMounted as exc:
+                app.notify_volume_not_mounted(self, exc.volume)
                 return False
-            elif not force and last_age < self.interval:
-                print(f"{self.name}: last backup is only {last_age} old (< {self.interval})")
+            last_log = self.get_last_log()
+            local_timestamp = snapshot_datetime(snapshot)
+            if last_log:
+                log_timestamp = timestamp_from_log(last_log)
+                last_age = local_timestamp - datetime.fromisoformat(log_timestamp)
+                if last_age == timedelta(0):
+                    print(f"{self.name}: the last local snapshot was already backed up")
+                    if force:
+                        app.last_snapshot_already_backed_up(self, local_timestamp)
+                    return False
+                elif not force and last_age < self.interval:
+                    print(f"{self.name}: last backup is only {last_age} old (< {self.interval})")
+                    return False
+            try:
+                task = BackupTask(self, device, snapshot, last_log, app)
+            except TimeMachineBackupInProgress:
                 return False
-        try:
-            task = BackupTask(self, device, snapshot, last_log, app)
-        except TimeMachineBackupInProgress:
-            return False
-        except NoFullDiskAccess:
-            app.notify_no_full_disk_access(self)
-            return False
-        task.perform()
-        return True
+            except NoFullDiskAccess:
+                app.notify_no_full_disk_access(self)
+                return False
+            try:
+                task.perform()
+            except SnapshotRemoved as exc:
+                _print_log(f"{self.name}: {exc}")
+                if attempt == MAX_SNAPSHOT_RETRIES:
+                    _print_log(f"{self.name}: giving up after"
+                               f" {attempt + 1} attempts")
+                    return False
+                # make sure the retry uses a snapshot that is newer than the
+                # last successful backup, even if the purged snapshot was the
+                # only one that was recent enough
+                self._run([TMUTIL, 'localsnapshot'], echo=self.echo, check=True)
+                _print_log(f"{self.name}: retrying with a fresh snapshot")
+                continue
+            return True
+        return False
 
     RE_SIZE = re.compile(r"^(.+)\/.*_\1_size_(\d+)$")
 
@@ -239,6 +258,7 @@ class BackupTask(RcloneMixin):
         self._app = app
         self.last_log = last_log
         self._tempdir = TemporaryDirectory()
+        self.snapshot = snapshot
         self.mount_point = self.mount_snapshot(device, snapshot)
         self.timestamp = RE_SNAPSHOT.match(snapshot).group(1)
         self.exclude_queue = Queue(maxsize=1)
@@ -280,22 +300,36 @@ class BackupTask(RcloneMixin):
 
     def perform(self):
         self.logs_path.mkdir(parents=True, exist_ok=True)
-        self.rclone('mkdir', self.destination_latest, dry_run=False)
-        self._app.sizing(self)
         try:
+            self.verify_snapshot()
+            self.rclone('mkdir', self.destination_latest, dry_run=False)
+            self._app.sizing(self)
             tree = self.backup_scout()
+            self.verify_snapshot()
             backup_size, exclude = self.get_user_feedback(tree)
             if backup_size is None:     # user skipped the backup
                 self._app.wrapping_up(self)
             elif backup_size != 0:
+                self.verify_snapshot()
                 self.expected_size = backup_size
                 self._app.start_backup(self, backup_size)
-                success = self.backup_sync(tree, exclude)
+                self.backup_sync(tree, exclude)
                 self._app.wrapping_up(self)
                 self.finalize()
         finally:
             _end_progress()
             self.cleanup()
+
+    def verify_snapshot(self):
+        """Make sure the snapshot is still mounted.
+
+        Local snapshots are purgeable and may be deleted by macOS while they
+        are being backed up, which also unmounts them. Detect this so that we
+        do not treat a partial (or empty) backup as complete.
+        """
+        if not self.mount_point.is_mount():
+            raise SnapshotRemoved(
+                f"the local snapshot {self.snapshot} was removed while mounted")
 
     def cleanup(self):
         self.unmount_snapshot()
@@ -316,7 +350,17 @@ class BackupTask(RcloneMixin):
         return mount_point
 
     def unmount_snapshot(self):
-        run([UMOUNT, self.mount_point], check=True)
+        try:
+            run([UMOUNT, self.mount_point], check=True)
+        except CalledProcessError:
+            # Local snapshots are purgeable and may be deleted by macOS while
+            # they are mounted (e.g. when Time Machine makes a new snapshot or
+            # disk space runs low). Deleting a snapshot also unmounts it, in
+            # which case there is nothing left to unmount.
+            if self.mount_point.is_mount():
+                raise
+            _print_log(f'{self.mount_point} was unmounted'
+                       ' (the snapshot was removed)')
 
     def get_user_feedback(self, tree):
         backup_size = tree.transfer_size
@@ -357,22 +401,37 @@ class BackupTask(RcloneMixin):
             _print_log(' '.join(map(str, cmd)))
         return Popen(cmd, stderr=PIPE)
 
+    @staticmethod
+    def _wait(process, timeout=3):
+        """Wait for an rclone process whose output was read to the end.
+
+        Returns the exit status. rclone sometimes does not exit when its log
+        output is complete; terminate it in that case.
+        """
+        try:
+            return process.wait(timeout=timeout)
+        except TimeoutExpired:
+            with suppress(ProcessLookupError):
+                process.terminate()
+            process.wait()
+            return 0
+
     def backup_scout(self):
         args = ['--retries', '1']
         if self.exclude_file.exists():
             args.extend(['--exclude-from', self.exclude_file])
+        scout = self.sync_popen(*args, dry_run=True)
         try:
-            scout = self.sync_popen(*args, dry_run=True)
             scout_log = self.file_path('scout', 'log')
             with scout_log.open('wb') as log:
                 tree = scout_log_to_tree(self.source, scout.stderr, log)
-        except CalledProcessError as cpe:
-            # TODO: interpret rclone_sync.returncode
+        except CalledProcessError:
+            self.verify_snapshot()
             raise
-        try:    # FIXME: why doesn't rclone always exit when sync is complete?
-            scout.wait(timeout=3)
-        except TimeoutExpired:
-            scout.terminate()
+        returncode = self._wait(scout)
+        self.verify_snapshot()
+        if returncode:
+            raise CalledProcessError(returncode, scout.args)
         tree.write_ncdu_export(self.scout_ncdu_export_path)
         return tree
 
@@ -417,18 +476,19 @@ class BackupTask(RcloneMixin):
                         _print_log(e)
                         _print_log(item.path)
                     update_progress()
-            _end_progress()
-            sync_tree.write_ncdu_export(self.sync_ncdu_export_path)
         except CalledProcessError as cpe:
+            self.verify_snapshot()
             rc = cpe.returncode
-            info = RCLONE_EXIT_CODES[rc]
+            info = RCLONE_EXIT_CODES.get(rc, "Unknown error")
             _print_log(f"rclone returned non-zero exit status {rc} - {info}")
             _print_log(f"The log file is {sync_log}")
-            return False
-        try:    # FIXME: why doesn't rclone always exit when sync is complete?
-            sync.wait(timeout=3)
-        except TimeoutExpired:
-            sync.terminate()
+            raise
+        returncode = self._wait(sync)
+        self.verify_snapshot()
+        if returncode:
+            raise CalledProcessError(returncode, sync.args)
+        _end_progress()
+        sync_tree.write_ncdu_export(self.sync_ncdu_export_path)
         transferred_filename = f'{self.name}_{self.timestamp}_transferred_{transferred}'
         self.rclone('touch', self.destination / transferred_filename)
         return True
@@ -589,3 +649,7 @@ class TimeMachineBackupInProgress(Exception):
 
 class NoFullDiskAccess(Exception):
     pass
+
+
+class SnapshotRemoved(Exception):
+    """The mounted local snapshot was removed (e.g. purged by macOS)"""
