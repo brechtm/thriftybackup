@@ -357,7 +357,7 @@ THRIFTY_PROXY = Path('/usr/local/bin') / THRIFTY.name
 
 TERMINAL_NCDU = """
 tell app "Terminal"
-  do script "{cat} {file} | ncdu --color off --apparent-size -f - && exit"
+  do script "{cat} {file} | ncdu --color off --apparent-size --enable-shell -f - && exit"
   set current settings of first window to settings set "ocean"
   activate
 end tell
