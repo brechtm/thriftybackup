@@ -342,7 +342,10 @@ class BackupTask(RcloneMixin):
         snapshot_source = self.mount_point / self.source.relative_to(source_root)
         extra = list(chain(['--bwlimit', self.bwlimit] if self.bwlimit else [],
                            ['--dry-run'] if dry_run else [],
-                           ['--progress'] if self.progress else []))
+                           ['--stats', '1s'] if self.progress else []))
+        # --stats 1s generates periodic JSON stats messages on stderr
+        # (via --use-json-log) which are parsed in sync_log_to_tree to show
+        # a single-line progress indicator when progress=True.
         cmd = [self.rclone_path, 'sync', '--use-json-log', '--log-level', 'INFO',
                '--fast-list', '--links', '--track-renames',
                '--track-renames-strategy', 'modtime,leaf', *args, *extra,
@@ -392,6 +395,8 @@ class BackupTask(RcloneMixin):
                 for item in it:
                     transferred += item.size
                     self._app.update_progress(self, transferred)
+            if self.progress:
+                print()  # advance past the progress line
             sync_tree.write_ncdu_export(self.sync_ncdu_export_path)
         except CalledProcessError as cpe:
             rc = cpe.returncode
@@ -432,6 +437,27 @@ class BackupTask(RcloneMixin):
         self.rclone('touch', backupdir / size_filename)
 
 
+_prev_progress_lines = 0
+
+# FIXME: provide function to print out stdout without interfering with progress info
+# (currently overwrites echo output on backup_sync)
+def _show_progress(msg_text):   # FIXME: reset _prev_progress_lines when finished
+    """Display a multi-line progress indicator, overwriting the previous one."""
+    global _prev_progress_lines
+
+    # Move cursor up and clear previously printed lines
+    if _prev_progress_lines > 0:
+        print(f'\033[{_prev_progress_lines}A\033[J', end='', flush=True)
+
+    # Print the new message
+    print(msg_text, end='', flush=True)
+
+    # Count lines just printed (msg_text may or may not end with newline)
+    _prev_progress_lines = msg_text.count('\n')
+    if not msg_text.endswith('\n'):
+        _prev_progress_lines += 1
+
+
 RE_RENAMED_FROM = re.compile('Renamed from "(.*)"')
 
 
@@ -443,6 +469,9 @@ def scout_log_to_tree(root_path, lines, log_file=None):
         if not (msg := try_json(line)):
             print(line)
             continue
+        if msg.get('stats') is not None:
+            _show_progress(msg['msg'])
+            continue  # don't write ephemeral stats messages to log
         if skipped := msg.get('skipped'):
             if skipped == 'remove directory':
                 break   # no need to handle explicitly?
@@ -463,6 +492,9 @@ def sync_log_to_tree(scout_tree, lines, log_file=None, dry_run=False):
         if not (msg := try_json(line)):
             print(line)
             continue
+        if msg.get('stats') is not None:
+            _show_progress(msg['msg'])
+            continue  # don't write ephemeral stats messages to log
         if (msg['msg'].startswith('Copied')
                 or (dry_run and msg.get('skipped') == 'copy')):
             file_path = msg['object']
