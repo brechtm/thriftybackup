@@ -242,6 +242,7 @@ class BackupTask(RcloneMixin):
         self.mount_point = self.mount_snapshot(device, snapshot)
         self.timestamp = RE_SNAPSHOT.match(snapshot).group(1)
         self.exclude_queue = Queue(maxsize=1)
+        self.expected_size = 0
 
     def __getattr__(self, name):
         # if attribute isn't set in this class, look it up in the configuration
@@ -287,6 +288,7 @@ class BackupTask(RcloneMixin):
             if backup_size is None:     # user skipped the backup
                 self._app.wrapping_up(self)
             elif backup_size != 0:
+                self.expected_size = backup_size
                 self._app.start_backup(self, backup_size)
                 success = self.backup_sync(tree, exclude)
                 self._app.wrapping_up(self)
@@ -389,9 +391,24 @@ class BackupTask(RcloneMixin):
             sync = self.sync_popen('--files-from-raw', files_txt,
                                    *backupdir_args, dry_run=self.dry_run)
             transferred = 0
+            moved_bytes = 0
+
+            def update_progress():
+                # rclone tracks server-side moves (e.g. overwritten files moved
+                # to the backup directory) separately from transferred bytes, so
+                # count them as work that has already been done
+                total = self.expected_size + moved_bytes
+                self._app.update_progress(self, transferred + moved_bytes, total)
+
+            def on_stats(stats):
+                nonlocal moved_bytes
+                moved_bytes = stats.get('serverSideMoveBytes') or 0
+                update_progress()
+
             sync_log = self.file_path('sync', 'log')
             with sync_log.open('wb') as log:
-                it = sync_log_to_tree(tree, sync.stderr, log, self.dry_run)
+                it = sync_log_to_tree(tree, sync.stderr, log, self.dry_run,
+                                      on_stats=on_stats)
                 sync_tree = next(it)
                 for item in it:
                     try:
@@ -399,7 +416,7 @@ class BackupTask(RcloneMixin):
                     except TypeError as e:
                         _print_log(e)
                         _print_log(item.path)
-                    self._app.update_progress(self, transferred)
+                    update_progress()
             _end_progress()
             sync_tree.write_ncdu_export(self.sync_ncdu_export_path)
         except CalledProcessError as cpe:
@@ -499,7 +516,8 @@ def scout_log_to_tree(root_path, lines, log_file=None):
     return tree
 
 
-def sync_log_to_tree(scout_tree, lines, log_file=None, dry_run=False):
+def sync_log_to_tree(scout_tree, lines, log_file=None, dry_run=False,
+                     on_stats=None):
     sync_tree = Root(scout_tree.source_path)
     yield sync_tree
     for line in lines:
@@ -510,6 +528,8 @@ def sync_log_to_tree(scout_tree, lines, log_file=None, dry_run=False):
             continue
         if msg.get('stats') is not None:
             _show_progress(msg['msg'])
+            if on_stats:
+                on_stats(msg['stats'])
             continue  # don't write ephemeral stats messages to log
         if (msg['msg'].startswith('Copied')
                 or (dry_run and msg.get('skipped') == 'copy')):

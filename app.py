@@ -303,14 +303,17 @@ class MenuBarApp(rumps.App):
         self.set_title(format_size(total_bytes))
 
     @interface
-    def update_progress(self, backup, transferred):
-        # rclone's byte count includes server-side moves, so it can exceed the
-        # size determined by the scout
-        transferred = min(transferred, self.total_bytes)
+    def update_progress(self, backup, transferred, total=None):
+        total = self.total_bytes if total is None else total
+        if total <= 0:
+            return
+        # rclone can briefly report more transferred bytes than expected, e.g.
+        # while retrying a transfer
+        transferred = min(transferred, total)
         self.progress_menu_item.title = \
             (f'{backup.name}: {format_size(transferred)}'
-             f' of {format_size(self.total_bytes)}')
-        self.set_title(f'{transferred / self.total_bytes:.0%}')
+             f' of {format_size(total)}')
+        self.set_title(f'{transferred / total:.0%}')
 
     @interface
     def wrapping_up(self, backup):
