@@ -393,8 +393,12 @@ class BackupTask(RcloneMixin):
                 it = sync_log_to_tree(tree, sync.stderr, log, self.dry_run)
                 sync_tree = next(it)
                 for item in it:
-                    transferred += item.size
-                    self._app.update_progress(self, transferred)
+                    try:
+                        transferred += item.size
+                    except TypeError as e:
+                        print(e)
+                        print(item.path)
+                    self._app.update_progress(self, transferred)    # FIXME: goes past 100% - transferred seems to match bytes from stats msg, but total bytes is smaller (totalBytes in stats keeps growing during transfer) -> analyze scout/sync log files to find the issue
             if self.progress:
                 print()  # advance past the progress line
             sync_tree.write_ncdu_export(self.sync_ncdu_export_path)
