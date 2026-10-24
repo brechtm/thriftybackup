@@ -122,6 +122,7 @@ class MenuBarApp(rumps.App):
         self.large_entry_menu_items = []
         self.total_size_menu_item = None
         self.progress_menu_item = None
+        self._failure_notifications = {}
         self._idling = False
         self.daemon = BackupDaemon(self, echo, progress, dry_run)
         self.daemon.start()
@@ -184,6 +185,16 @@ class MenuBarApp(rumps.App):
 
     def backup_now(self, _, backup):
         self.daemon.backup_now(backup)
+
+    @interface
+    def notify_backup_failed(self, backup, error):
+        key = (error.returncode, str(error.log_path))
+        if self._failure_notifications.get(backup.name) == key:
+            return  # don't repeat the same notification every CHECK_INTERVAL
+        self._failure_notifications[backup.name] = key
+        rumps.notification(f"{backup.name}: Backup failed", None,
+                           f"{error}. See the log file {error.log_path}",
+                           ignoreDnD=True)
 
     @interface
     def notify_volume_not_mounted(self, backup, volume):
@@ -328,6 +339,7 @@ class MenuBarApp(rumps.App):
 
     @interface
     def wrapping_up(self, backup):
+        self._failure_notifications.pop(backup.name, None)
         self.title = None
         self.menu.clear()
         self.add_menuitem(f'{backup.name}: wrapping up...')

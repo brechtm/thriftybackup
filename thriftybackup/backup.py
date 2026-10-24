@@ -221,6 +221,11 @@ class BackupConfig(RcloneMixin):
                 return False
             try:
                 task.perform()
+            except RcloneFailed as exc:
+                _print_log(f"{self.name}: {exc}")
+                _print_log(f"{self.name}: the log file is {exc.log_path}")
+                app.notify_backup_failed(self, exc)
+                return False
             except SnapshotRemoved as exc:
                 _print_log(f"{self.name}: {exc}")
                 if attempt == MAX_SNAPSHOT_RETRIES:
@@ -420,9 +425,9 @@ class BackupTask(RcloneMixin):
         args = ['--retries', '1']
         if self.exclude_file.exists():
             args.extend(['--exclude-from', self.exclude_file])
+        scout_log = self.file_path('scout', 'log')
         scout = self.sync_popen(*args, dry_run=True)
         try:
-            scout_log = self.file_path('scout', 'log')
             with scout_log.open('wb') as log:
                 tree = scout_log_to_tree(self.source, scout.stderr, log)
         except CalledProcessError:
@@ -431,7 +436,7 @@ class BackupTask(RcloneMixin):
         returncode = self._wait(scout)
         self.verify_snapshot()
         if returncode:
-            raise CalledProcessError(returncode, scout.args)
+            raise RcloneFailed(returncode, scout_log)
         tree.write_ncdu_export(self.scout_ncdu_export_path)
         return tree
 
@@ -446,6 +451,7 @@ class BackupTask(RcloneMixin):
                     print(file.path.with_suffix(''), file=files)
         backupdir_args = (['--backup-dir', self.backup_directory]
                           if self.backup_directory else [])
+        sync_log = self.file_path('sync', 'log')
         try:
             sync = self.sync_popen('--files-from-raw', files_txt,
                                    *backupdir_args, dry_run=self.dry_run)
@@ -464,7 +470,6 @@ class BackupTask(RcloneMixin):
                 moved_bytes = stats.get('serverSideMoveBytes') or 0
                 update_progress()
 
-            sync_log = self.file_path('sync', 'log')
             with sync_log.open('wb') as log:
                 it = sync_log_to_tree(tree, sync.stderr, log, self.dry_run,
                                       on_stats=on_stats)
@@ -478,15 +483,11 @@ class BackupTask(RcloneMixin):
                     update_progress()
         except CalledProcessError as cpe:
             self.verify_snapshot()
-            rc = cpe.returncode
-            info = RCLONE_EXIT_CODES.get(rc, "Unknown error")
-            _print_log(f"rclone returned non-zero exit status {rc} - {info}")
-            _print_log(f"The log file is {sync_log}")
-            raise
+            raise RcloneFailed(cpe.returncode, sync_log) from cpe
         returncode = self._wait(sync)
         self.verify_snapshot()
         if returncode:
-            raise CalledProcessError(returncode, sync.args)
+            raise RcloneFailed(returncode, sync_log)
         _end_progress()
         sync_tree.write_ncdu_export(self.sync_ncdu_export_path)
         transferred_filename = f'{self.name}_{self.timestamp}_transferred_{transferred}'
@@ -565,6 +566,9 @@ def scout_log_to_tree(root_path, lines, log_file=None):
         if msg.get('stats') is not None:
             _show_progress(msg['msg'])
             continue  # don't write ephemeral stats messages to log
+        if msg.get('level') == 'error':
+            _print_log('ERROR:', msg['msg'])
+            continue
         if skipped := msg.get('skipped'):
             if skipped == 'remove directory':
                 break   # no need to handle explicitly?
@@ -653,3 +657,14 @@ class NoFullDiskAccess(Exception):
 
 class SnapshotRemoved(Exception):
     """The mounted local snapshot was removed (e.g. purged by macOS)"""
+
+
+class RcloneFailed(Exception):
+    """rclone reported errors, so the backup was aborted"""
+
+    def __init__(self, returncode, log_path):
+        info = RCLONE_EXIT_CODES.get(returncode, "Unknown error")
+        super().__init__(f"rclone returned non-zero exit status {returncode}"
+                         f" - {info}")
+        self.returncode = returncode
+        self.log_path = log_path
