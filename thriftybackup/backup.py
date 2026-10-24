@@ -571,7 +571,7 @@ def scout_log_to_tree(root_path, lines, log_file=None):
             continue
         if skipped := msg.get('skipped'):
             if skipped == 'remove directory':
-                break   # no need to handle explicitly?
+                continue   # no need to handle explicitly
             tree.add_file(msg['object'], msg['size'], action=skipped)
         elif m := RE_RENAMED_FROM.fullmatch(msg['msg']):
             source = m.group(1)
