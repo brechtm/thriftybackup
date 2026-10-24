@@ -1,5 +1,6 @@
 
 import os
+import platform
 import traceback
 import webbrowser
 
@@ -40,6 +41,46 @@ from thriftybackup.util import format_size
 # change ~/Library to include-only
 
 CHECK_INTERVAL = 5 * 60     # 5 minutes
+
+
+def _applescript_string(text):
+    return '"{}"'.format(str(text).replace('\\', '\\\\').replace('"', '\\"'))
+
+
+def _legacy_notifications_work():
+    """Whether rumps' NSUserNotification based notifications are delivered.
+
+    Apple deprecated NSUserNotificationCenter in macOS 10.14 and stopped
+    delivering and presenting its notifications in macOS 26 (Tahoe): the calls
+    still succeed, the notifications are just silently discarded. That cannot
+    be detected at runtime, so gate on the OS version instead.
+    """
+    try:
+        return int(platform.mac_ver()[0].split('.')[0]) < 26
+    except (ValueError, IndexError):
+        return True
+
+
+def display_notification(title, subtitle, message, **kwargs):
+    """Show a notification, falling back to osascript where rumps' can't.
+
+    rumps only wraps the deprecated NSUserNotification API (see
+    _legacy_notifications_work). osascript's 'display notification' still
+    works, at the cost of showing Script Editor as the sending application and
+    of losing the click-through callback (data=...).
+    """
+    if _legacy_notifications_work():
+        rumps.notification(title, subtitle, message, **kwargs)
+        return
+    script = f'display notification {_applescript_string(message)}'
+    if title:
+        script += f' with title {_applescript_string(title)}'
+    if subtitle:
+        script += f' subtitle {_applescript_string(subtitle)}'
+    try:
+        run(['osascript', '-e', script], check=False)
+    except OSError as exc:
+        print(f'Could not display notification: {exc}')
 
 
 class BackupDaemon(FileSystemEventHandler):
@@ -122,7 +163,8 @@ class MenuBarApp(rumps.App):
         self.large_entry_menu_items = []
         self.total_size_menu_item = None
         self.progress_menu_item = None
-        self._failure_notifications = {}
+        self._failures = {}
+        self._notified = {}
         self._idling = False
         self.daemon = BackupDaemon(self, echo, progress, dry_run)
         self.daemon.start()
@@ -155,13 +197,19 @@ class MenuBarApp(rumps.App):
         self.title = None
         self.menu.clear()
         for backup in self.daemon.configurations:     # TODO: slow, run in thread?
-            menu = self.add_menuitem(backup.name)
+            failure = self._failures.get(backup.name)
+            menu = self.add_menuitem(('\u26a0 ' if failure else '') + backup.name)
             backup_now = partial(self.backup_now, backup=backup)
             self.add_menuitem('Backup now', backup_now, parent=menu)
             edit_exclude = partial(self.edit_exclude_file,
                                    exclude_file=backup.exclude_file)
             self.add_menuitem('Edit exclude file', edit_exclude, parent=menu)
             menu.add(rumps.separator)
+            if failure:
+                show_failure = partial(self.show_failure, failure=failure)
+                self.add_menuitem('Last backup failed...', show_failure,
+                                  parent=menu)
+                menu.add(rumps.separator)
             self.add_menuitem('Last backups:', parent=menu)
             for snapshot, size, sync_json in backup.last_backups():
                 size_str = format_size(size, True).replace(' ', '\u2007')
@@ -174,13 +222,17 @@ class MenuBarApp(rumps.App):
         self.add_menuitem('Install command-line tool', self.install_thrifty, 'c')
         self.add_menuitem('Quit', self.quit, 'q')
         self.add_menuitem(f'Version {__version__}')
+        if self._failures:
+            # notification center cannot be relied on, so flag this in the menu
+            # bar itself (see display_notification)
+            self.set_title('\u26a0', color=(1, 0, 0, 1))
         self._idling = True
 
     @interface
     def reload_config(self):
         if self._idling:
-            rumps.notification("Configuration change detected", None,
-                               "Reloading configuration...")
+            display_notification("Configuration change detected", None,
+                                 "Reloading configuration...")
             self.idle()
 
     def backup_now(self, _, backup):
@@ -188,27 +240,35 @@ class MenuBarApp(rumps.App):
 
     @interface
     def notify_backup_failed(self, backup, error):
+        # always record the failure: the menu bar is the reliable channel
+        self._failures[backup.name] = error
         key = (error.returncode, str(error.log_path))
-        if self._failure_notifications.get(backup.name) == key:
+        if self._notified.get(backup.name) == key:
             return  # don't repeat the same notification every CHECK_INTERVAL
-        self._failure_notifications[backup.name] = key
-        rumps.notification(f"{backup.name}: Backup failed", None,
-                           f"{error}. See the log file {error.log_path}",
-                           ignoreDnD=True)
+        self._notified[backup.name] = key
+        display_notification(f"{backup.name}: Backup failed", None,
+                             f"{error}. See the log file {error.log_path}")
+
+    def show_failure(self, _, failure):
+        response = rumps.alert(
+            title='Backup failed',
+            message=f"{failure}\n\nLog file:\n{failure.log_path}",
+            ok='Open Log', cancel='Close')
+        if response:
+            run(['open', str(failure.log_path)])
 
     @interface
     def notify_volume_not_mounted(self, backup, volume):
-        rumps.notification(f"{backup.name}: Could not backup", None,
-                           f"The volume {volume} is not mounted.")
+        display_notification(f"{backup.name}: Could not backup", None,
+                             f"The volume {volume} is not mounted.")
 
     @interface
     def notify_no_full_disk_access(self, backup):
-        rumps.notification(f"{backup.name}: Could not backup", None,
-                           "Please grant Full Disk Access to ThriftyBackup"
-                           " in System Preferences > Security & Privacy.",
-                           data=dict(type='open_system_preferences'),
-                           action_button='Open System Preferences',
-                           ignoreDnD=True)
+        display_notification(f"{backup.name}: Could not backup", None,
+                             "Please grant Full Disk Access to ThriftyBackup"
+                             " in System Preferences > Security & Privacy.",
+                             data=dict(type='open_system_preferences'),
+                             action_button='Open System Preferences')
 
     @interface
     def starting(self, backup):
@@ -232,18 +292,20 @@ class MenuBarApp(rumps.App):
 
     @interface
     def last_snapshot_already_backed_up(self, backup, snapshot_timestamp):
-        rumps.notification(f"{backup.name}: Skipping backup", None,
-                           f"The last local snapshot ({snapshot_timestamp}) was"
-                           " already backed up.", ignoreDnD=True)
+        display_notification(f"{backup.name}: Skipping backup", None,
+                             f"The last local snapshot ({snapshot_timestamp})"
+                             " was already backed up.")
 
     @interface
     def threshold_exceeded(self, backup, total_size, large_entries):
         self.menu.clear()
         self.total_size = total_size
-        rumps.notification(f"{backup.name}: Backup size exceeds treshold", None,
-                           f"Total backup size: {format_size(total_size)}",
-                           data=dict(type='threshold_exceeded',
-                                     ncdu_export_path=backup.scout_ncdu_export_path))
+        display_notification(f"{backup.name}: Backup size exceeds treshold",
+                             None,
+                             f"Total backup size: {format_size(total_size)}",
+                             data=dict(
+                                 type='threshold_exceeded',
+                                 ncdu_export_path=backup.scout_ncdu_export_path))
         self.set_title(f"{backup.name}: {format_size(total_size)}",
                        color=(1, 0, 0, 1))
         continue_backup = partial(self.continue_backup, backup=backup)
@@ -339,7 +401,8 @@ class MenuBarApp(rumps.App):
 
     @interface
     def wrapping_up(self, backup):
-        self._failure_notifications.pop(backup.name, None)
+        self._failures.pop(backup.name, None)
+        self._notified.pop(backup.name, None)
         self.title = None
         self.menu.clear()
         self.add_menuitem(f'{backup.name}: wrapping up...')
